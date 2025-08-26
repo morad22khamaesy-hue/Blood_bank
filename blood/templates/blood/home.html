@@ -1,0 +1,45 @@
+{% extends "blood/base.html" %}
+{% block title %}Home - Blood Bank{% endblock %}
+{% block content %}
+  <!-- בהיר: גרדיאנט עדין + מסגרת בהירה -->
+  <section class="mb-4 p-4 p-md-5 rounded-4"
+           style="background:linear-gradient(135deg, rgba(185,28,28,.08), rgba(185,28,28,.03));
+                  border:1px solid var(--bb-border)">
+    <h1 class="display-6 fw-bold" style="color:var(--bb-primary)">Welcome to Blood Bank</h1>
+    <p class="lead mb-4" style="color:var(--bb-muted)">
+      Register donations, manage inventory and safely dispense units with compatibility logic.
+    </p>
+    <div class="d-flex gap-2">
+      <a class="btn btn-bb btn-lg" href="{% url 'intake' %}">New Donation</a>
+      <!-- outline בהיר במקום outline-light (שנועד ל־Dark) -->
+      <a class="btn btn-outline-secondary btn-lg" href="{% url 'dispense' %}">Dispense</a>
+    </div>
+  </section>
+
+  <div class="row g-4">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <span class="badge badge-soft mb-2">Donations</span>
+          <h5 class="card-title">Intake</h5>
+          <p class="card-text" style="color:var(--bb-muted)">
+            Register new donation units with validation for National ID and donor name.
+          </p>
+          <a class="btn btn-bb" href="{% url 'intake' %}">Go to Intake</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <span class="badge badge-soft mb-2">Compatibility</span>
+          <h5 class="card-title">Dispense</h5>
+          <p class="card-text" style="color:var(--bb-muted)">
+            Request a blood type and quantity; we build a compatible dispense plan.
+          </p>
+          <a class="btn btn-bb" href="{% url 'dispense' %}">Go to Dispense</a>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

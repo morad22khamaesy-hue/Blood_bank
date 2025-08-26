@@ -1,0 +1,98 @@
+{% extends "blood/base.html" %}
+{% block title %}Inventory - Blood Bank{% endblock %}
+{% block content %}
+
+  <h2 class="h4 mb-3">Inventory</h2>
+
+  <!-- CHART -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title">Units by blood type</h5>
+      <canvas id="invChart" height="100"></canvas>
+      <p class="text-muted small mt-2">
+        “Near expiry” shows units expiring within ≤ {{ near_days }} day(s).
+        The <strong style="color:#B91C1C">red dashed line</strong> marks the low-stock threshold.
+      </p>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="card">
+    <div class="card-body table-responsive">
+      <table class="table table-striped table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Blood type</th>
+            <th class="text-uppercase">Available</th>
+            <th class="text-uppercase">Near expiry (≤ {{ near_days }}d)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td><span class="badge bg-danger-subtle text-danger-emphasis">{{ row.bt }}</span></td>
+              <td><span class="fw-semibold" style="color: var(--bb-success);">{{ row.total }}</span></td>
+              <td><span class="fw-semibold" style="color: var(--bb-accent);">{{ row.near }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ labels|json_script:"labels-data" }}
+  {{ values|json_script:"values-data" }}
+  {{ near_values|json_script:"near-data" }}
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    (function(){
+      const labels = JSON.parse(document.getElementById('labels-data').textContent);
+      const values = JSON.parse(document.getElementById('values-data').textContent);
+      const near   = JSON.parse(document.getElementById('near-data').textContent);
+
+      const thresholdValue = 5;
+      const thr = labels.map(() => thresholdValue);
+
+      const ctx = document.getElementById('invChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {  /* Available (green) */
+              label: 'Available',
+              data: values,
+              backgroundColor: 'rgba(22,163,74,0.2)',
+              borderColor: '#16A34A',
+              borderWidth: 1
+            },
+            {  /* Near expiry (amber) */
+              label: 'Near expiry',
+              data: near,
+              backgroundColor: 'rgba(245,158,11,0.25)',
+              borderColor: '#F59E0B',
+              borderWidth: 1
+            },
+            {  /* Red dashed threshold line */
+              type: 'line',
+              label: `Low-stock threshold (${thresholdValue})`,
+              data: thr,
+              borderColor: '#B91C1C',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+              tension: 0.3
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "blood/base.html" %}
+{% block title %}Intake - Blood Bank{% endblock %}
+{% block content %}
+  <div class="row">
+    <div class="col-lg-7">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h4 mb-3" style="color:var(--bb-text)">New Donation</h2>
+
+          <form method="post" novalidate>
+            {% csrf_token %}
+
+            <!-- National ID -->
+            <div class="mb-3">
+              <label class="form-label" for="id_national_id">National ID</label>
+              <input
+                type="text"
+                name="national_id"
+                id="id_national_id"
+                maxlength="9"
+                class="form-control js-digits-only {% if form.national_id.errors %}is-invalid{% endif %}"
+                value="{{ form.national_id.value|default_if_none:'' }}"
+                placeholder="e.g., 123456789"
+                inputmode="numeric"
+                autocomplete="off"
+                pattern="\d{9}">
+              {% if form.national_id.errors %}
+                <div class="invalid-feedback">{{ form.national_id.errors.0 }}</div>
+              {% else %}
+                <div class="form-text">Exactly 9 digits.</div>
+              {% endif %}
+            </div>
+
+            <!-- Full name -->
+            <div class="mb-3">
+              <label class="form-label" for="id_full_name">Full name</label>
+              <input
+                type="text"
+                name="full_name"
+                id="id_full_name"
+                class="form-control js-letters-only {% if form.full_name.errors %}is-invalid{% endif %}"
+                value="{{ form.full_name.value|default_if_none:'' }}"
+                placeholder="Donor name"
+                autocomplete="off">
+              {% if form.full_name.errors %}
+                <div class="invalid-feedback">{{ form.full_name.errors.0 }}</div>
+              {% endif %}
+            </div>
+
+            <!-- Blood type -->
+            <div class="mb-3">
+              <label class="form-label" for="id_blood_type">Blood type</label>
+              {{ form.blood_type }}
+              {% if form.blood_type.errors %}
+                <div class="invalid-feedback d-block">{{ form.blood_type.errors.0 }}</div>
+              {% else %}
+                <div class="form-text">Choose the donor's blood type.</div>
+              {% endif %}
+            </div>
+
+            <button type="submit" class="btn btn-bb">Save Donation</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
