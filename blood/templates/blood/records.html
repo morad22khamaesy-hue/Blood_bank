@@ -1,0 +1,227 @@
+{% extends "blood/base.html" %}
+{% load tz %}
+{% block title %}Records - Blood Bank{% endblock %}
+{% block content %}
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="h4 mb-0">Records</h2>
+    <div class="d-flex gap-2">
+      <!-- Download ALL dispensed (no filters) -->
+      <div class="btn-group">
+        <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+          Download all Dispensed
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item" href="{% url 'dispensed_export' %}?format=csv">CSV</a></li>
+          <li><a class="dropdown-item" href="{% url 'dispensed_export' %}?format=xlsx">Excel (.xlsx)</a></li>
+          <li><a class="dropdown-item" href="{% url 'dispensed_export' %}?format=pdf">PDF</a></li>
+        </ul>
+      </div>
+
+      {% if show_portal_logout %}
+        <a href="{% url 'portal_logout' %}" class="btn btn-outline-danger btn-sm">Logout</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <form method="get" class="row g-3 mb-3">
+    <div class="col-md-4">
+      <label class="form-label">Blood type</label>
+      <select name="blood_type" class="form-select">
+        <option value="">All types</option>
+        {% for bt, _ in blood_types %}
+          <option value="{{ bt }}" {% if current_blood_type == bt %}selected{% endif %}>{{ bt }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label">Sort by</label>
+      <select name="sort" class="form-select">
+        <option value="recent" {% if current_sort == "recent" %}selected{% endif %}>Newest first</option>
+        <option value="oldest" {% if current_sort == "oldest" %}selected{% endif %}>Oldest first</option>
+        <option value="name"   {% if current_sort == "name" %}selected{% endif %}>Donor name (A→Z)</option>
+        <option value="type"   {% if current_sort == "type" %}selected{% endif %}>Blood type (A→Z)</option>
+      </select>
+    </div>
+
+    <div class="col-md-4 d-flex align-items-end gap-2">
+      <button type="submit" class="btn btn-bb">Apply</button>
+      {% if current_blood_type or current_sort != "recent" %}
+        <a href="{% url 'records' %}" class="btn btn-outline-secondary">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <!-- Donations (intake) -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h5 class="card-title mb-0">Intake</h5>
+        <!-- Export Intake with format picker, preserving filters -->
+        <div class="btn-group">
+          <button class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Export Intake
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li>
+              <a class="dropdown-item" href="{% url 'donations_export' %}?format=csv{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">
+                CSV
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{% url 'donations_export' %}?format=xlsx{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">
+                Excel (.xlsx)
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{% url 'donations_export' %}?format=pdf{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">
+                PDF
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      {% if donations %}
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Donor</th>
+                <th>Blood type</th>
+                <th>Donation time</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for d in donations %}
+                <tr>
+                  <td>{{ forloop.counter0|add:donations.start_index }}</td>
+                  <td>{{ d.donor.full_name }}</td>
+                  <td><span class="badge bg-danger-subtle text-danger-emphasis">{{ d.blood_type }}</span></td>
+                  <td>{% localtime on %}{{ d.donation_date|date:"Y-m-d H:i" }}{% endlocaltime %}</td>
+                  <td class="text-end">
+                    <form method="post" action="{% url 'donation_delete' d.id %}" class="d-inline" onsubmit="return confirm('Delete this donation permanently?');">
+                      {% csrf_token %}
+                      <input type="password" name="portal_password" class="form-control form-control-sm d-inline-block" style="max-width: 180px;" placeholder="Portal password" required>
+                      <button class="btn btn-outline-danger btn-sm ms-1" type="submit">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <nav class="d-flex justify-content-between align-items-center">
+          <span class="text-muted small">
+            Showing {{ donations.start_index }}–{{ donations.end_index }} of {{ donations.paginator.count }}
+          </span>
+          <ul class="pagination mb-0">
+            {% if donations.has_previous %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ donations.previous_page_number }}{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">Prev</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Prev</span></li>
+            {% endif %}
+            <li class="page-item active"><span class="page-link">{{ donations.number }}</span></li>
+            {% if donations.has_next %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ donations.next_page_number }}{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">Next</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Next</span></li>
+            {% endif %}
+          </ul>
+        </nav>
+      {% else %}
+        <div class="text-muted">No donations found.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Dispensed units -->
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h5 class="card-title mb-0">Dispensed units</h5>
+        <!-- Export Dispensed with format picker, preserving filters -->
+        <div class="btn-group">
+          <button class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Export Dispensed
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li>
+              <a class="dropdown-item" href="{% url 'dispensed_export' %}?format=csv{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">
+                CSV
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{% url 'dispensed_export' %}?format=xlsx{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">
+                Excel (.xlsx)
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{% url 'dispensed_export' %}?format=pdf{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">
+                PDF
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      {% if dispensed %}
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Donor</th>
+                <th>Blood type</th>
+                <th>Dispensed at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for u in dispensed %}
+                <tr>
+                  <td>{{ forloop.counter0|add:dispensed.start_index }}</td>
+                  <td>{{ u.donor.full_name }}</td>
+                  <td><span class="badge bg-danger-subtle text-danger-emphasis">{{ u.blood_type }}</span></td>
+                  <td>{% if u.dispensed_at %}{% localtime on %}{{ u.dispensed_at|date:"Y-m-d H:i" }}{% endlocaltime %}{% else %}-{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <nav class="d-flex justify-content-between align-items-center">
+          <span class="text-muted small">
+            Showing {{ dispensed.start_index }}–{{ dispensed.end_index }} of {{ dispensed.paginator.count }}
+          </span>
+          <ul class="pagination mb-0">
+            {% if dispensed.has_previous %}
+              <li class="page-item">
+                <a class="page-link" href="?dpage={{ dispensed.previous_page_number }}{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">Prev</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Prev</span></li>
+            {% endif %}
+            <li class="page-item active"><span class="page-link">{{ dispensed.number }}</span></li>
+            {% if dispensed.has_next %}
+              <li class="page-item">
+                <a class="page-link" href="?dpage={{ dispensed.next_page_number }}{% if qs_no_page %}&{{ qs_no_page }}{% endif %}">Next</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Next</span></li>
+            {% endif %}
+          </ul>
+        </nav>
+      {% else %}
+        <div class="text-muted">No dispensed units.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

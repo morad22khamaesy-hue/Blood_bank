@@ -2,52 +2,256 @@
 from urllib.parse import urlencode
 from datetime import timedelta
 import csv
+import io
+from functools import wraps
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import login as auth_login, logout as auth_logout
+from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpResponse
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 
-from .forms import DonationForm, DispenseForm
-from .models import DonationUnit, DispenseLog, BLOOD_TYPES
+from .forms import DonationForm, DispenseForm, SignupForm, LoginForm
+from .models import (
+    DonationUnit, DispenseLog, BLOOD_TYPES,
+    DispenseRequest, Profile, AuditEvent, Donor
+)
 from .compat import plan_dispense
+import time
+
+# ========= קבועים לתצוגת האדמין ביומן הפעילות =========
+ADMIN_DISPLAY_NAME = "MORAD"
+ADMIN_ROLE_LABEL = "ADMIN"
 
 
-def home(request):
-    return render(request, "blood/home.html")
+# ------------------------ עזר ------------------------
+def _urgent_pending_count():
+    return DispenseRequest.objects.filter(
+        status=DispenseRequest.Status.PENDING,
+        urgency=DispenseRequest.Urgency.URGENT,
+    ).count()
 
 
-def intake(request):
+def _get_role(request):
+    if request.user.is_authenticated and hasattr(request.user, "profile"):
+        return request.user.profile.role
+    return ""
+
+
+def _ensure_session_key(request):
+    if not request.session.session_key:
+        request.session.save()
+    return request.session.session_key
+
+
+def log_event(request, action, role=None, user_display=None, **details):
+    """
+    יצירת AuditEvent.
+    role – תפקיד שיוצג בשורה (ברירת מחדל: תפקיד המשתמש).
+    user_display – תצוגת שם משתמש מלאכותית (למשל MORAD בפורטל).
+    details – dict נוסף לשמירה.
+    """
+    role_val = role if role is not None else _get_role(request)
+    skey = _ensure_session_key(request)
+    payload = details or {}
+    if user_display:
+        payload["display_user"] = user_display
+    AuditEvent.objects.create(
+        user=request.user if request.user.is_authenticated else None,
+        role=role_val or "",
+        session_key=skey or "",
+        action=action,
+        details=payload,
+    )
+
+
+# ------------------------ הרשאות תפקיד ------------------------
+def role_required(expected_role):
+    def decorator(view_func):
+        @wraps(view_func)
+        @login_required(login_url="login")
+        def _wrapped(request, *args, **kwargs):
+            role = _get_role(request)
+            if role != expected_role:
+                messages.error(request, "You do not have access to this page.")
+                return redirect("home")
+            return view_func(request, *args, **kwargs)
+        return _wrapped
+    return decorator
+
+
+# ------------------------ פורטל מנהל (סיסמה חד־פעמית) ------------------------
+def portal_protected(view_func):
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        # מאפשר כניסה חד־פעמית רק לעמוד הנוכחי
+        if request.session.pop("portal_once_ok", False):
+            return view_func(request, *args, **kwargs)
+        # שמירת היעד והפניה למסך סיסמה
+        request.session["portal_next"] = request.get_full_path()
+        return redirect("portal_login")
+    return _wrapped
+
+def portal_login(request):
+    """
+    הזנת סיסמת מנהל. לאחר הצלחה מתקבלת גישה חד־פעמית לעמוד שביקשנו.
+    מעבר לעמוד מנהל אחר ידרוש סיסמה שוב.
+    """
+    error = None
     if request.method == "POST":
-        form = DonationForm(request.POST)
+        pwd = (request.POST.get("password") or "").strip()
+        portal_pwd = (getattr(settings, "PORTAL_PASSWORD", "") or "change-me")
+        if pwd == portal_pwd:
+            request.session["portal_once_ok"] = True
+            messages.success(request, "Access granted.")
+            next_url = request.session.pop("portal_next", None) or reverse("records")
+            return redirect(next_url)
+        error = "Incorrect password."
+        messages.error(request, error)
+
+    # ספירת בקשות דחופות אם הפונקציה קיימת בקובץ
+    try:
+        urgent_count = _urgent_pending_count()
+    except NameError:
+        urgent_count = 0
+
+    ctx = {"error": error, "urgent_pending_count": urgent_count}
+    return render(request, "blood/portal_login.html", ctx)
+
+def portal_logout(request):
+    request.session.pop("portal_once_ok", None)
+    request.session.pop("portal_next", None)
+    messages.info(request, "You have been logged out.")
+    return redirect("portal_login")
+
+
+# ------------------------ הזדהות משתמשים ------------------------
+def signup(request):
+    if request.method == "POST":
+        form = SignupForm(request.POST)
         if form.is_valid():
-            form.save()
-            messages.success(request, "Donation saved successfully.")
+            user = form.save()
+            auth_login(request, user)
+            messages.success(request, "Welcome! Your account was created.")
+            log_event(request, "signup", role=_get_role(request))
             return redirect("home")
     else:
-        form = DonationForm()
-    return render(request, "blood/intake.html", {"form": form})
+        form = SignupForm()
+    return render(
+        request,
+        "blood/signup.html",
+        {"form": form, "urgent_pending_count": _urgent_pending_count(), "user_role": _get_role(request)},
+    )
 
 
+def login(request):
+    if request.method == "POST":
+        form = LoginForm(request, data=request.POST)
+        if form.is_valid():
+            user = form.get_user()
+            auth_login(request, user)
+            messages.success(request, "Signed in successfully.")
+            log_event(request, "login", role=_get_role(request))
+            return redirect("home")
+    else:
+        form = LoginForm(request)
+    return render(
+        request,
+        "blood/login.html",
+        {"form": form, "urgent_pending_count": _urgent_pending_count(), "user_role": _get_role(request)},
+    )
+
+
+def logout(request):
+    log_event(request, "logout", role=_get_role(request))
+    auth_logout(request)
+    messages.info(request, "You have been signed out.")
+    return redirect("home")
+
+
+# ------------------------ עמוד ציבורי ------------------------
+def home(request):
+    return render(
+        request,
+        "blood/home.html",
+        {"urgent_pending_count": _urgent_pending_count(), "user_role": _get_role(request)},
+    )
+
+
+# ------------------------ תורם בלבד ------------------------
+@role_required(Profile.Role.DONOR)
+def intake(request):
+    prof = getattr(request.user, "profile", None)
+    initial_full_name = (
+        prof.full_name if prof and prof.full_name else request.user.get_full_name() or request.user.username
+    )
+    initial = {
+        "national_id": prof.national_id if prof else "",
+        "full_name": initial_full_name,
+        "blood_type": prof.default_blood_type if prof else "",
+    }
+
+    if request.method == "POST":
+        # נעול לשינוי – משתמש לא יכול לשנות בשיגור
+        post_data = {
+            "national_id": initial["national_id"],
+            "full_name": initial["full_name"],
+            "blood_type": initial["blood_type"],
+        }
+        form = DonationForm(post_data)
+        if form.is_valid():
+            donation = form.save()
+            messages.success(request, "Donation saved successfully.")
+            log_event(
+                request,
+                "donation_create",
+                blood_type=donation.blood_type,
+                donor=donation.donor.full_name,
+            )
+            return redirect("home")
+        else:
+            messages.error(request, "Could not save donation. Please contact support.")
+    else:
+        form = DonationForm(initial=initial)
+
+    return render(
+        request,
+        "blood/intake.html",
+        {
+            "form": form,
+            "lock_fields": True,  # התבנית תשים readonly / disabled לשדות
+            "urgent_pending_count": _urgent_pending_count(),
+            "user_role": _get_role(request),
+        },
+    )
+
+
+# ------------------------ מבקש מנות בלבד ------------------------
+@role_required(Profile.Role.REQUESTER)
 def dispense(request):
-    """
-    Dispense units using compatibility plan + FEFO (closest expiry first).
-    Works only with AVAILABLE and non-expired units.
-    """
-    result = None
-    plan = None
+    requests_all = DispenseRequest.objects.all().order_by("-created_at")
 
     if request.method == "POST":
         form = DispenseForm(request.POST)
         if form.is_valid():
-            btype = form.cleaned_data["blood_type"]
+            urgency = form.cleaned_data["urgency"]
+            hospital_raw = form.cleaned_data["hospital"]
+            blood_type = form.cleaned_data["blood_type"]
             qty = form.cleaned_data["quantity"]
-            now = timezone.now()
+            notes = form.cleaned_data.get("notes", "").strip()
 
-            # count available & non-expired inventory by blood type
+            if "|" in hospital_raw:
+                hospital_name, hospital_city = [x.strip() for x in hospital_raw.split("|", 1)]
+            else:
+                hospital_name, hospital_city = hospital_raw, ""
+
+            now = timezone.now()
             counts_qs = (
                 DonationUnit.objects.filter(status=DonationUnit.Status.AVAILABLE)
                 .filter(Q(expiry_at__isnull=True) | Q(expiry_at__gt=now))
@@ -55,75 +259,118 @@ def dispense(request):
                 .annotate(cnt=Count("id"))
             )
             inventory_counts = {row["blood_type"]: row["cnt"] for row in counts_qs}
+            plan, shortfall = plan_dispense(blood_type, qty, inventory_counts)
 
-            # build compatibility plan
-            plan, shortfall = plan_dispense(btype, qty, inventory_counts)
-
-            if shortfall == 0 and plan:
-                # FEFO: take closest-to-expiry first (then by donation_date)
-                for dtype, take in plan.items():
-                    units = (
-                        DonationUnit.objects.filter(
-                            blood_type=dtype, status=DonationUnit.Status.AVAILABLE
-                        )
-                        .filter(Q(expiry_at__isnull=True) | Q(expiry_at__gt=now))
-                        .order_by("expiry_at", "donation_date")[:take]
+            # אין מלאי מספיק -> ההזמנה לא תישלח
+            if not plan or (shortfall and shortfall > 0):
+                if not plan or shortfall == qty:
+                    messages.error(
+                        request,
+                        f"No compatible inventory available now for {blood_type}. The request was not submitted.",
                     )
-                    ids = list(units.values_list("id", flat=True))
-                    if ids:
-                        DonationUnit.objects.filter(id__in=ids).update(
-                            status=DonationUnit.Status.DISPENSED,
-                            dispensed_at=now,
-                        )
-
-                DispenseLog.objects.create(
-                    requested_type=btype, quantity=qty, dispensed_map=plan
-                )
-                result = f"Dispensed {qty} unit(s) for {btype}."
-                messages.success(request, result)
-            else:
-                if plan:
-                    partial = sum(plan.values())
-                    result = (
-                        f"Cannot fully dispense {qty} unit(s) for {btype}. "
-                        f"Available now: {partial} compatible unit(s)."
+                    log_event(
+                        request,
+                        "dispense_request_failed",
+                        blood_type=blood_type,
+                        qty=qty,
+                        reason="no_stock",
                     )
                 else:
-                    result = f"No compatible inventory for {qty} unit(s) of {btype}."
-                messages.warning(request, result)
+                    available_now = qty - shortfall
+                    messages.error(
+                        request,
+                        f"Insufficient stock for {blood_type}: requested {qty}, available {available_now}. The request was not submitted.",
+                    )
+                    log_event(
+                        request,
+                        "dispense_request_failed",
+                        blood_type=blood_type,
+                        qty=qty,
+                        reason="partial_stock",
+                        available=available_now,
+                    )
+                return redirect("dispense")
+
+            # יש מלאי – בקשה ממתינה לאישור מנהל
+            DispenseRequest.objects.create(
+                hospital_name=hospital_name,
+                hospital_city=hospital_city,
+                urgency=urgency,
+                requested_type=blood_type,
+                quantity=qty,
+                status=DispenseRequest.Status.PENDING,
+                plan=plan,
+                shortfall=0,
+                notes=notes,
+            )
+            log_event(
+                request,
+                "dispense_request_created",
+                blood_type=blood_type,
+                qty=qty,
+                urgency=urgency,
+                hospital=hospital_name,
+            )
+            messages.success(request, "Request submitted and pending manager approval.")
+            return redirect("dispense")
     else:
         form = DispenseForm()
 
     return render(
-        request, "blood/dispense.html", {"form": form, "result": result, "plan": plan}
+        request,
+        "blood/dispense.html",
+        {
+            "form": form,
+            "requests_all": requests_all,
+            "urgent_pending_count": _urgent_pending_count(),
+            "user_role": _get_role(request),
+        },
     )
 
 
-def donations_list(request):
+# ------------------------ מנהל (מוגן פורטל) ------------------------
+@portal_protected
+def records(request):
     """
-    Donations table with filtering by blood type, sorting, and pagination.
+    Records (במקום Donations):
+    A: תרומות שנקלטו
+    B: מנות שנופקו
     """
     blood_type = request.GET.get("blood_type", "").strip()
     sort_key = request.GET.get("sort", "recent").strip()
 
-    qs = DonationUnit.objects.select_related("donor")
+    # A – תרומות
+    in_qs = DonationUnit.objects.select_related("donor")
     if blood_type:
-        qs = qs.filter(blood_type=blood_type)
-
-    sort_map = {
-        "recent": "-donation_date",  # newest first
+        in_qs = in_qs.filter(blood_type=blood_type)
+    sort_map_in = {
+        "recent": "-donation_date",
         "oldest": "donation_date",
         "name": "donor__full_name",
         "type": "blood_type",
     }
-    order_by = sort_map.get(sort_key, "-donation_date")
-    qs = qs.order_by(order_by)
+    in_order = sort_map_in.get(sort_key, "-donation_date")
+    in_qs = in_qs.order_by(in_order)
+    in_pager = Paginator(in_qs, 12)
+    in_page = request.GET.get("page")
+    donations = in_pager.get_page(in_page)
 
-    paginator = Paginator(qs, 12)
-    page = request.GET.get("page")
-    donations = paginator.get_page(page)
+    # B – מנות שנופקו
+    out_qs = DonationUnit.objects.filter(status=DonationUnit.Status.DISPENSED).select_related("donor")
+    if blood_type:
+        out_qs = out_qs.filter(blood_type=blood_type)
+    sort_map_out = {
+        "recent": "-dispensed_at",
+        "oldest": "dispensed_at",
+        "name": "donor__full_name",
+        "type": "blood_type",
+    }
+    out_order = sort_map_out.get(sort_key, "-dispensed_at")
+    out_qs = out_qs.order_by(out_order)
+    out_pager = Paginator(out_qs, 12)
+    out_page = request.GET.get("dpage")
+    dispensed = out_pager.get_page(out_page)
 
-    # keep filters in pagination links
     qp = {}
     if blood_type:
         qp["blood_type"] = blood_type
@@ -132,21 +379,90 @@ def donations_list(request):
     qs_no_page = urlencode(qp)
 
     context = {
+        "page_title": "Records",
         "donations": donations,
+        "dispensed": dispensed,
         "blood_types": BLOOD_TYPES,
         "current_blood_type": blood_type,
         "current_sort": sort_key,
         "qs_no_page": qs_no_page,
+        "show_portal_logout": True,
+        "urgent_pending_count": _urgent_pending_count(),
+        "user_role": _get_role(request),
     }
-    return render(request, "blood/donations_list.html", context)
+    return render(request, "blood/records.html", context)
 
 
+# ------------------------ ייצוא דו"חות ------------------------
+def _export_rows(filename_prefix, headers, rows, fmt):
+    fmt = (fmt or "csv").lower()
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "data"
+        ws.append(headers)
+        for r in rows:
+            ws.append(r)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        resp = HttpResponse(
+            buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="{filename_prefix}.xlsx"'
+        return resp
+    elif fmt == "pdf":
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=filename_prefix)
+        elems = []
+        styles = getSampleStyleSheet()
+        elems.append(Paragraph(filename_prefix.title(), styles["Title"]))
+        elems.append(Spacer(1, 12))
+
+        data = [headers] + rows
+        table = Table(data, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c81d25")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.whitesmoke),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ]
+            )
+        )
+        elems.append(table)
+        doc.build(elems)
+        pdf = buf.getvalue()
+        buf.close()
+        resp = HttpResponse(pdf, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_prefix}.pdf"'
+        return resp
+    else:
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_prefix}.csv"'
+        writer = csv.writer(resp)
+        writer.writerow(headers)
+        for r in rows:
+            writer.writerow(r)
+        return resp
+
+
+@portal_protected
 def donations_export(request):
-    """
-    Export filtered/sorted donations to CSV (without National ID).
-    """
     blood_type = request.GET.get("blood_type", "").strip()
     sort_key = request.GET.get("sort", "recent").strip()
+    fmt = request.GET.get("format", "csv")
 
     qs = DonationUnit.objects.select_related("donor")
     if blood_type:
@@ -161,36 +477,67 @@ def donations_export(request):
     order_by = sort_map.get(sort_key, "-donation_date")
     qs = qs.order_by(order_by)
 
-    # CSV response (no sensitive ID)
-    response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = 'attachment; filename="donations.csv"'
-    writer = csv.writer(response)
-    writer.writerow(["Donor name", "Blood type", "Donation time"])
-    for d in qs:
-        writer.writerow([d.donor.full_name, d.blood_type, d.donation_date.strftime("%Y-%m-%d %H:%M")])
-    return response
+    headers = ["Donor name", "Blood type", "Donation time"]
+    rows = [
+        [d.donor.full_name, d.blood_type, d.donation_date.strftime("%Y-%m-%d %H:%M")]
+        for d in qs
+    ]
+    return _export_rows("donations", headers, rows, fmt)
 
 
+@portal_protected
+def dispensed_export(request):
+    blood_type = request.GET.get("blood_type", "").strip()
+    sort_key = request.GET.get("sort", "recent").strip()
+    fmt = request.GET.get("format", "csv")
+
+    qs = DonationUnit.objects.filter(status=DonationUnit.Status.DISPENSED).select_related("donor")
+    if blood_type:
+        qs = qs.filter(blood_type=blood_type)
+
+    sort_map = {
+        "recent": "-dispensed_at",
+        "oldest": "dispensed_at",
+        "name": "donor__full_name",
+        "type": "blood_type",
+    }
+    order_by = sort_map.get(sort_key, "-dispensed_at")
+    qs = qs.order_by(order_by)
+
+    headers = ["Donor name", "Blood type", "Dispensed at"]
+    rows = [
+        [
+            u.donor.full_name,
+            u.blood_type,
+            (u.dispensed_at or u.donation_date).strftime("%Y-%m-%d %H:%M"),
+        ]
+        for u in qs
+    ]
+    return _export_rows("dispensed", headers, rows, fmt)
+
+
+@portal_protected
 def inventory_dashboard(request):
     """
-    Inventory summary with counts per blood type and near-expiry counts.
-    Also passes 'rows' for an easy table, and JSON-safe series for Chart.js.
+    סיכום מלאי + בקשות ממתינות + יומן פעילות.
+    מחזיר גם low_stock_threshold לגרף (קו אדום).
     """
     now = timezone.now()
     near_days = getattr(settings, "NEAR_EXPIRY_DAYS", 7)
     near_cutoff = now + timedelta(days=near_days)
+    low_threshold = getattr(settings, "LOW_STOCK_THRESHOLD", 500)
 
     base_qs = (
         DonationUnit.objects.filter(status=DonationUnit.Status.AVAILABLE)
         .filter(Q(expiry_at__isnull=True) | Q(expiry_at__gt=now))
     )
 
-    # total counts per type
-    counts = {bt: 0 for bt, _ in BLOOD_TYPES}
+    # זמינות לפי סוג דם
+    available_counts = {bt: 0 for bt, _ in BLOOD_TYPES}
     for row in base_qs.values("blood_type").annotate(cnt=Count("id")):
-        counts[row["blood_type"]] = row["cnt"]
+        available_counts[row["blood_type"]] = row["cnt"]
 
-    # near-expiry counts per type
+    # קרוב לפקיעה
     near_counts = {bt: 0 for bt, _ in BLOOD_TYPES}
     for row in (
         base_qs.filter(expiry_at__isnull=False, expiry_at__lte=near_cutoff)
@@ -199,16 +546,144 @@ def inventory_dashboard(request):
     ):
         near_counts[row["blood_type"]] = row["cnt"]
 
+    # סה"כ תרומות היסטוריות
+    donated_totals = {bt: 0 for bt, _ in BLOOD_TYPES}
+    for row in DonationUnit.objects.values("blood_type").annotate(cnt=Count("id")):
+        donated_totals[row["blood_type"]] = row["cnt"]
+
     labels = [bt for bt, _ in BLOOD_TYPES]
-    values = [counts[bt] for bt in labels]
+    values = [available_counts[bt] for bt in labels]
     near_values = [near_counts[bt] for bt in labels]
-    rows = [{"bt": bt, "total": counts[bt], "near": near_counts[bt]} for bt in labels]
+    rows = [
+        {"bt": bt, "donated": donated_totals[bt], "available": available_counts[bt], "near": near_counts[bt]}
+        for bt in labels
+    ]
+
+    # בקשות ממתינות
+    pending = DispenseRequest.objects.filter(status=DispenseRequest.Status.PENDING).order_by(
+        "-urgency", "created_at"
+    )
+
+    # יומן פעילות – דף זה
+    events_qs = AuditEvent.objects.select_related("user").order_by("-created_at")
+    events_pager = Paginator(events_qs, 25)
+    epage = request.GET.get("epage")
+    events = events_pager.get_page(epage)
 
     context = {
         "near_days": near_days,
         "labels": labels,
         "values": values,
         "near_values": near_values,
-        "rows": rows,  # for simple table loop
+        "rows": rows,
+        "show_portal_logout": True,
+        "urgent_pending_count": _urgent_pending_count(),
+        "pending_requests": pending,
+        "events": events,
+        "user_role": _get_role(request),
+        "low_stock_threshold": low_threshold,
     }
     return render(request, "blood/inventory_dashboard.html", context)
+
+
+# ------------------------ פעולות מנהל ------------------------
+def donation_delete(request, pk: int):
+    if request.method != "POST":
+        return redirect("records")
+    pwd = (request.POST.get("portal_password") or "").strip()
+    if pwd != (getattr(settings, "PORTAL_PASSWORD", "") or "change-me"):
+        messages.error(request, "Incorrect password — donation was NOT deleted.")
+        next_url = request.POST.get("next") or reverse("records")
+        return redirect(next_url)
+
+    donation = get_object_or_404(DonationUnit, pk=pk)
+    bt, dn = donation.blood_type, donation.donor.full_name
+    donation.delete()
+    log_event(request, "donation_delete", blood_type=bt, donor=dn)
+    messages.success(request, "Donation deleted permanently.")
+    next_url = request.POST.get("next") or reverse("records")
+    return redirect(next_url)
+
+
+def request_approve(request, pk: int):
+    if request.method != "POST":
+        return redirect("inventory")
+
+    req = get_object_or_404(DispenseRequest, pk=pk)
+    if req.status != DispenseRequest.Status.PENDING:
+        messages.info(request, "Request already processed.")
+        return redirect("inventory")
+
+    pwd = (request.POST.get("portal_password") or "").strip()
+    if pwd != (getattr(settings, "PORTAL_PASSWORD", "") or "change-me"):
+        messages.error(request, "Incorrect password — request not approved.")
+        return redirect("inventory")
+
+    now = timezone.now()
+    counts_qs = (
+        DonationUnit.objects.filter(status=DonationUnit.Status.AVAILABLE)
+        .filter(Q(expiry_at__isnull=True) | Q(expiry_at__gt=now))
+        .values("blood_type")
+        .annotate(cnt=Count("id"))
+    )
+    inventory_counts = {row["blood_type"]: row["cnt"] for row in counts_qs}
+    plan, shortfall = plan_dispense(req.requested_type, req.quantity, inventory_counts)
+
+    if shortfall != 0 or not plan:
+        messages.error(request, "Not enough compatible inventory to fulfill this request right now.")
+        req.plan = plan or {}
+        req.shortfall = shortfall or 0
+        req.save(update_fields=["plan", "shortfall"])
+        return redirect("inventory")
+
+    with transaction.atomic():
+        for dtype, take in plan.items():
+            units = (
+                DonationUnit.objects.select_for_update(skip_locked=True)
+                .filter(blood_type=dtype, status=DonationUnit.Status.AVAILABLE)
+                .filter(Q(expiry_at__isnull=True) | Q(expiry_at__gt=now))
+                .order_by("expiry_at", "donation_date")[:take]
+            )
+            ids = list(units.values_list("id", flat=True))
+            if len(ids) != take:
+                messages.error(request, "Inventory changed; try again.")
+                return redirect("inventory")
+            DonationUnit.objects.filter(id__in=ids).update(
+                status=DonationUnit.Status.DISPENSED, dispensed_at=now
+            )
+
+        DispenseLog.objects.create(
+            requested_type=req.requested_type, quantity=req.quantity, dispensed_map=plan
+        )
+        log_event(
+            request,
+            "request_approved",
+            req_id=req.id,
+            blood_type=req.requested_type,
+            qty=req.quantity,
+        )
+        req.delete()
+
+    messages.success(request, "Request approved and fulfilled.")
+    return redirect("inventory")
+
+
+def request_reject(request, pk: int):
+    if request.method != "POST":
+        return redirect("inventory")
+
+    req = get_object_or_404(DispenseRequest, pk=pk)
+    if req.status != DispenseRequest.Status.PENDING:
+        messages.info(request, "Request already processed.")
+        return redirect("inventory")
+
+    log_event(
+        request,
+        "request_rejected",
+        req_id=req.id,
+        blood_type=req.requested_type,
+        qty=req.quantity,
+    )
+    req.delete()
+    messages.success(request, "Request rejected and removed.")
+    return redirect("inventory")

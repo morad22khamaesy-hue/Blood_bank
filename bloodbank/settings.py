@@ -126,4 +126,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # --- Blood unit policy ---
 RBC_EXPIRY_DAYS = 42
 NEAR_EXPIRY_DAYS = 7
-LOW_STOCK_THRESHOLD = 5
+LOW_STOCK_THRESHOLD = 500
+
+
+import os
+PORTAL_PASSWORD = os.environ.get("PORTAL_PASSWORD", "admin123")
+
+
+
+TEMPLATES[0]["OPTIONS"]["context_processors"] += [
+    "blood.context_processors.user_role",
+]
+
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "home"
+LOGOUT_REDIRECT_URL = "home"

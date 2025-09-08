@@ -5,57 +5,57 @@
     <div class="col-lg-7">
       <div class="card">
         <div class="card-body">
-          <h2 class="h4 mb-3" style="color:var(--bb-text)">New Donation</h2>
+          <h2 class="h4 mb-3">New Donation</h2>
+
+          {% if messages %}
+            {% for message in messages %}
+              <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
 
           <form method="post" novalidate>
             {% csrf_token %}
 
-            <!-- National ID -->
+            <!-- National ID (readonly) -->
             <div class="mb-3">
               <label class="form-label" for="id_national_id">National ID</label>
               <input
                 type="text"
-                name="national_id"
                 id="id_national_id"
+                name="national_id"
+                class="form-control"
+                value="{{ form.initial.national_id|default:form.national_id.value }}"
                 maxlength="9"
-                class="form-control js-digits-only {% if form.national_id.errors %}is-invalid{% endif %}"
-                value="{{ form.national_id.value|default_if_none:'' }}"
-                placeholder="e.g., 123456789"
                 inputmode="numeric"
-                autocomplete="off"
-                pattern="\d{9}">
-              {% if form.national_id.errors %}
-                <div class="invalid-feedback">{{ form.national_id.errors.0 }}</div>
-              {% else %}
-                <div class="form-text">Exactly 9 digits.</div>
-              {% endif %}
+                pattern="\d{9}"
+                readonly>
+              <div class="form-text">This value is taken from your profile.</div>
             </div>
 
-            <!-- Full name -->
+            <!-- Full name (readonly) -->
             <div class="mb-3">
               <label class="form-label" for="id_full_name">Full name</label>
               <input
                 type="text"
-                name="full_name"
                 id="id_full_name"
-                class="form-control js-letters-only {% if form.full_name.errors %}is-invalid{% endif %}"
-                value="{{ form.full_name.value|default_if_none:'' }}"
-                placeholder="Donor name"
-                autocomplete="off">
-              {% if form.full_name.errors %}
-                <div class="invalid-feedback">{{ form.full_name.errors.0 }}</div>
-              {% endif %}
+                name="full_name"
+                class="form-control"
+                value="{{ form.initial.full_name|default:form.full_name.value }}"
+                readonly>
+              <div class="form-text">This value is taken from your profile.</div>
             </div>
 
-            <!-- Blood type -->
+            <!-- Blood type (display readonly + hidden for submission) -->
             <div class="mb-3">
-              <label class="form-label" for="id_blood_type">Blood type</label>
-              {{ form.blood_type }}
-              {% if form.blood_type.errors %}
-                <div class="invalid-feedback d-block">{{ form.blood_type.errors.0 }}</div>
-              {% else %}
-                <div class="form-text">Choose the donor's blood type.</div>
-              {% endif %}
+              <label class="form-label" for="id_blood_type_display">Blood type</label>
+              <input
+                type="text"
+                id="id_blood_type_display"
+                class="form-control"
+                value="{{ form.initial.blood_type|default:form.blood_type.value }}"
+                readonly>
+              <input type="hidden" name="blood_type" value="{{ form.initial.blood_type|default:form.blood_type.value }}">
+              <div class="form-text">This value is taken from your profile.</div>
             </div>
 
             <button type="submit" class="btn btn-bb">Save Donation</button>

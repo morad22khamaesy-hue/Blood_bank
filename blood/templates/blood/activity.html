@@ -1,0 +1,45 @@
+{% extends "blood/base.html" %}
+{% block title %}Activity - Blood Bank{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="h4 mb-0">Activity</h2>
+    {% if show_portal_logout %}
+      <a href="{% url 'portal_logout' %}" class="btn btn-outline-secondary">Logout</a>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      {% if events %}
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Role</th>
+                <th>Action</th>
+                <th>Details</th>
+                <th>Session</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in events %}
+                <tr>
+                  <td>{{ e.created_at|date:"Y-m-d H:i:s" }}</td>
+                  <td>{% if e.user %}{{ e.user.username }}{% else %}-{% endif %}</td>
+                  <td>{{ e.role }}</td>
+                  <td>{{ e.action }}</td>
+                  <td><code class="small">{{ e.details|safe }}</code></td>
+                  <td class="text-muted small">{{ e.session_key|slice:":12" }}…</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">No activity yet.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

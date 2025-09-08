@@ -1,38 +1,53 @@
 {% extends "blood/base.html" %}
+{% load tz %}
 {% block title %}Inventory - Blood Bank{% endblock %}
 {% block content %}
 
-  <h2 class="h4 mb-3">Inventory</h2>
-
-  <!-- CHART -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="h4 mb-0">Inventory</h2>
+    <a href="{% url 'portal_logout' %}" class="btn btn-outline-danger btn-sm">
+      Logout
+    </a>
+  </div>
+  <!-- Chart card -->
   <div class="card mb-4">
     <div class="card-body">
       <h5 class="card-title">Units by blood type</h5>
       <canvas id="invChart" height="100"></canvas>
-      <p class="text-muted small mt-2">
+      <p class="text-muted small mt-2 mb-0">
         “Near expiry” shows units expiring within ≤ {{ near_days }} day(s).
-        The <strong style="color:#B91C1C">red dashed line</strong> marks the low-stock threshold.
+      </p>
+      <p class="small mt-1 mb-0">
+        <span class="me-2">Legend:</span>
+        <span class="badge bg-success-subtle text-success-emphasis me-1">Available</span>
+        <span class="badge bg-warning-subtle text-warning-emphasis me-2">Near expiry</span>
+        <span class="align-middle">
+          <span style="display:inline-block;width:32px;border-top:2px dashed #dc3545;transform:translateY(-5px)"></span>
+          <span class="text-danger">Low-stock threshold (<span id="thresholdText"></span>)</span>
+        </span>
       </p>
     </div>
   </div>
 
-  <!-- TABLE -->
-  <div class="card">
+  <!-- Per-type counters -->
+  <div class="card mb-4">
     <div class="card-body table-responsive">
       <table class="table table-striped table-hover align-middle">
         <thead>
           <tr>
             <th>Blood type</th>
-            <th class="text-uppercase">Available</th>
-            <th class="text-uppercase">Near expiry (≤ {{ near_days }}d)</th>
+            <th>Total donated (all time)</th>
+            <th class="text-success">Available now</th>
+            <th>Near expiry (≤ {{ near_days }}d)</th>
           </tr>
         </thead>
         <tbody>
           {% for row in rows %}
             <tr>
               <td><span class="badge bg-danger-subtle text-danger-emphasis">{{ row.bt }}</span></td>
-              <td><span class="fw-semibold" style="color: var(--bb-success);">{{ row.total }}</span></td>
-              <td><span class="fw-semibold" style="color: var(--bb-accent);">{{ row.near }}</span></td>
+              <td>{{ row.donated }}</td>
+              <td class="fw-semibold text-success">{{ row.available }}</td>
+              <td>{{ row.near }}</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -40,59 +55,215 @@
     </div>
   </div>
 
+  <!-- Pending requests -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="d-flex align-items-center mb-2">
+        <h5 class="card-title mb-0">Pending requests</h5>
+        {% if urgent_pending_count %}
+          <span class="badge bg-danger ms-2">Urgent: {{ urgent_pending_count }}</span>
+        {% endif %}
+      </div>
+
+      {% if pending_requests %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Created</th>
+                <th>Hospital</th>
+                <th>Urgency</th>
+                <th>Blood type</th>
+                <th>Quantity</th>
+                <th>Plan</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in pending_requests %}
+                <tr>
+                  <td>{% localtime on %}{{ r.created_at|date:"Y-m-d H:i" }}{% endlocaltime %}</td>
+                  <td>{{ r.hospital_name }}{% if r.hospital_city %}, {{ r.hospital_city }}{% endif %}</td>
+                  <td>
+                    {% if r.urgency == "URGENT" %}
+                      <span class="badge bg-danger">Urgent</span>
+                    {% else %}
+                      <span class="badge bg-warning text-dark">Regular</span>
+                    {% endif %}
+                  </td>
+                  <td><span class="badge bg-danger-subtle text-danger-emphasis">{{ r.requested_type }}</span></td>
+                  <td>{{ r.quantity }}</td>
+                  <td>
+                    {% if r.plan %}
+                      {% for k, v in r.plan.items %}
+                        <span class="badge bg-secondary-subtle text-secondary-emphasis me-1">{{ k }}: {{ v }}</span>
+                      {% endfor %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    <form class="d-inline" method="post" action="{% url 'request_approve' r.id %}">
+                      {% csrf_token %}
+                      <input type="password" name="portal_password" class="form-control d-inline-block me-1" style="width:160px" placeholder="Portal password" required>
+                      <button type="submit" class="btn btn-sm btn-success">Approve</button>
+                    </form>
+                    <form class="d-inline ms-1" method="post" action="{% url 'request_reject' r.id %}">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-sm btn-outline-danger">Reject</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">No pending requests.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Activity log -->
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Activity log (Audit trail)</h5>
+      <p class="text-muted small mb-3">Signup, login, logout, donation created, dispense requests, portal access, etc.</p>
+
+      {% if events %}
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Role</th>
+                <th>Action</th>
+                <th>Details</th>
+                <th>Session</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in events %}
+                <tr>
+                  <td>{% localtime on %}{{ e.created_at|date:"Y-m-d H:i" }}{% endlocaltime %}</td>
+                  <td>
+                    {% if e.details.display_user %}
+                      {{ e.details.display_user }}
+                    {% elif e.user %}
+                      {{ e.user.username }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>{{ e.role|default:"" }}</td>
+                  <td><span class="badge bg-secondary-subtle text-secondary-emphasis">{{ e.action }}</span></td>
+                  <td class="small">
+                    {% if e.details %}
+                      {% if e.details.items %}
+                        {% for k, v in e.details.items %}
+                          {% if k != 'display_user' %}
+                            <span class="me-2"><strong>{{ k }}:</strong> {{ v }}</span>
+                          {% endif %}
+                        {% endfor %}
+                      {% else %}
+                        {{ e.details }}
+                      {% endif %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td class="text-muted small">{{ e.session_key|default:"" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <nav class="d-flex justify-content-between align-items-center">
+          <span class="text-muted small">
+            Showing {{ events.start_index }}–{{ events.end_index }} of {{ events.paginator.count }}
+          </span>
+          <ul class="pagination mb-0">
+            {% if events.has_previous %}
+              <li class="page-item"><a class="page-link" href="?epage={{ events.previous_page_number }}">Prev</a></li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Prev</span></li>
+            {% endif %}
+            <li class="page-item active"><span class="page-link">{{ events.number }}</span></li>
+            {% if events.has_next %}
+              <li class="page-item"><a class="page-link" href="?epage={{ events.next_page_number }}">Next</a></li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Next</span></li>
+            {% endif %}
+          </ul>
+        </nav>
+      {% else %}
+        <div class="alert alert-info mb-0">No activity recorded yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Safe JSON blobs for Chart.js -->
   {{ labels|json_script:"labels-data" }}
   {{ values|json_script:"values-data" }}
   {{ near_values|json_script:"near-data" }}
+  {{ low_stock_threshold|default:500|json_script:"low-threshold" }}
 
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
-    (function(){
-      const labels = JSON.parse(document.getElementById('labels-data').textContent);
-      const values = JSON.parse(document.getElementById('values-data').textContent);
-      const near   = JSON.parse(document.getElementById('near-data').textContent);
+    (function () {
+      // Read JSON safely
+      var labels = JSON.parse(document.getElementById('labels-data').textContent);
+      var values = JSON.parse(document.getElementById('values-data').textContent);
+      var near   = JSON.parse(document.getElementById('near-data').textContent);
+      var lowThreshold = Number(JSON.parse(document.getElementById('low-threshold').textContent));
 
-      const thresholdValue = 5;
-      const thr = labels.map(() => thresholdValue);
+      // Put the number in the legend text
+      document.getElementById('thresholdText').textContent = String(lowThreshold);
 
-      const ctx = document.getElementById('invChart').getContext('2d');
+      // Dashed red threshold line
+      var lowLine = {
+        id: 'lowLine',
+        afterDatasetsDraw: function (chart) {
+          var chartArea = chart.chartArea;
+          var yScale = chart.scales && chart.scales.y ? chart.scales.y : null;
+          if (!chartArea || !yScale || isNaN(lowThreshold)) return;
+
+          var yPos = yScale.getPixelForValue(lowThreshold);
+          var ctx = chart.ctx;
+          ctx.save();
+          ctx.setLineDash([6, 6]);
+          ctx.strokeStyle = '#dc3545';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, yPos);
+          ctx.lineTo(chartArea.right, yPos);
+          ctx.stroke();
+          ctx.restore();
+        }
+      };
+
+      var ctx = document.getElementById('invChart').getContext('2d');
       new Chart(ctx, {
         type: 'bar',
         data: {
-          labels,
+          labels: labels,
           datasets: [
-            {  /* Available (green) */
-              label: 'Available',
-              data: values,
-              backgroundColor: 'rgba(22,163,74,0.2)',
-              borderColor: '#16A34A',
-              borderWidth: 1
-            },
-            {  /* Near expiry (amber) */
-              label: 'Near expiry',
-              data: near,
-              backgroundColor: 'rgba(245,158,11,0.25)',
-              borderColor: '#F59E0B',
-              borderWidth: 1
-            },
-            {  /* Red dashed threshold line */
-              type: 'line',
-              label: `Low-stock threshold (${thresholdValue})`,
-              data: thr,
-              borderColor: '#B91C1C',
-              backgroundColor: 'transparent',
-              borderWidth: 2,
-              borderDash: [6, 4],
-              pointRadius: 0,
-              fill: false,
-              tension: 0.3
-            }
+            { label: 'Available',   data: values, backgroundColor: 'rgba(25,135,84,0.45)' },  // green
+            { label: 'Near expiry', data: near,   backgroundColor: 'rgba(255,193,7,0.55)' }   // yellow
           ]
         },
         options: {
           responsive: true,
-          scales: { y: { beginAtZero: true } }
-        }
+          scales: {
+            y: { beginAtZero: true }
+          }
+        },
+        plugins: [lowLine]
       });
     })();
   </script>
+
 {% endblock %}
