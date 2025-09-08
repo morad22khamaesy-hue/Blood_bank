@@ -117,28 +117,38 @@ class SignupForm(UserCreationForm):
         (Profile.Role.DONOR, "Register as Donor"),
         (Profile.Role.REQUESTER, "Register as Requester"),
     ]
-    role = forms.ChoiceField(choices=ROLE_CHOICES, label="Role", widget=forms.Select(attrs={"class": "form-select"}))
+    role = forms.ChoiceField(choices=ROLE_CHOICES, label="Role",
+                             widget=forms.Select(attrs={"class": "form-select"}))
 
     # לשימוש כשנרשם כתורם
-    full_name = forms.CharField(label="Full name", required=False,
-                                validators=[name_validator],
-                                widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Full name"}))
-    national_id = forms.CharField(label="National ID", required=False,
-                                  validators=[digits_9_validator],
-                                  widget=forms.TextInput(attrs={
-                                      "class": "form-control",
-                                      "placeholder": "9 digits",
-                                      "maxlength": "9",
-                                      "inputmode": "numeric",
-                                      "pattern": r"\d{9}",
-                                  }))
-    donor_blood_type = forms.ChoiceField(label="Blood type (for donors)", required=False,
-                                         choices=[("", "Choose blood type")] + BLOOD_TYPES,
-                                         widget=forms.Select(attrs={"class": "form-select"}))
+    full_name = forms.CharField(
+        label="Full name", required=False,
+        validators=[name_validator],
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Full name"}),
+    )
+    national_id = forms.CharField(
+        label="National ID", required=False,
+        validators=[digits_9_validator],
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "placeholder": "9 digits",
+            "maxlength": "9",
+            "inputmode": "numeric",
+            "pattern": r"\d{9}",
+        }),
+    )
+    donor_blood_type = forms.ChoiceField(
+        label="Blood type (for donors)", required=False,
+        choices=[("", "Choose blood type")] + BLOOD_TYPES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
 
     class Meta:
         model = User
-        fields = ["username", "password1", "password2", "role", "full_name", "national_id", "donor_blood_type"]
+        fields = [
+            "username", "password1", "password2",
+            "role", "full_name", "national_id", "donor_blood_type",
+        ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -149,23 +159,35 @@ class SignupForm(UserCreationForm):
     def clean(self):
         data = super().clean()
         role = data.get("role")
+
         if role == Profile.Role.DONOR:
-            # שדות חובה לתורם
-            if not data.get("full_name"):
+            full_name = (data.get("full_name") or "").strip()
+            national_id = (data.get("national_id") or "").strip()
+            donor_bt = (data.get("donor_blood_type") or "").strip()
+
+            if not full_name:
                 self.add_error("full_name", "Full name is required for donors.")
-            if not data.get("national_id"):
+            if not national_id:
                 self.add_error("national_id", "National ID is required for donors.")
-            if not data.get("donor_blood_type"):
+            if not donor_bt:
                 self.add_error("donor_blood_type", "Blood type is required for donors.")
+
+            # 🔒 מניעת כפילות ת"ז (בפרופיל תורם ובטבלת Donor)
+            if national_id:
+                if Profile.objects.filter(role=Profile.Role.DONOR, national_id=national_id).exists():
+                    self.add_error("national_id", "This National ID is already registered to another donor.")
+                if Donor.objects.filter(national_id=national_id).exists():
+                    self.add_error("national_id", "This National ID already exists in the donors registry.")
+
         return data
 
     def save(self, commit=True):
         user = super().save(commit=commit)
         role = self.cleaned_data["role"]
 
-        full_name = self.cleaned_data.get("full_name", "").strip()
-        national_id = self.cleaned_data.get("national_id", "").strip()
-        donor_bt = self.cleaned_data.get("donor_blood_type", "").strip()
+        full_name = (self.cleaned_data.get("full_name") or "").strip()
+        national_id = (self.cleaned_data.get("national_id") or "").strip()
+        donor_bt = (self.cleaned_data.get("donor_blood_type") or "").strip()
 
         if commit:
             prof = Profile.objects.create(
@@ -175,7 +197,7 @@ class SignupForm(UserCreationForm):
                 national_id=national_id if role == Profile.Role.DONOR else "",
                 default_blood_type=donor_bt if role == Profile.Role.DONOR else "",
             )
-            # מייצרים/מעדכנים רשומת תורם להפחתת חיכוך ב-Intake
+            # יצירת/עדכון רשומת Donor כדי לזרז Intake
             if role == Profile.Role.DONOR and national_id:
                 donor, _ = Donor.objects.get_or_create(
                     national_id=national_id,
@@ -185,42 +207,41 @@ class SignupForm(UserCreationForm):
                     donor.full_name = full_name
                     donor.save(update_fields=["full_name"])
         else:
-            # במקרה commit=False, שמור על הערכים לשימוש חיצוני
             user._selected_role = role
         return user
 
+
 class LoginForm(AuthenticationForm):
-    username = forms.CharField(label="Username",
-                               widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Username"}))
-    password = forms.CharField(label="Password",
-                               widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Password"}))
+    username = forms.CharField(
+        label="Username",
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Username"}),
+    )
+    password = forms.CharField(
+        label="Password",
+        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Password"}),
+    )
 
 # ---------------- Domain forms ----------------
 class DispenseForm(forms.Form):
     urgency = forms.ChoiceField(
-        choices=URGENCY_CHOICES,
-        label="Urgency",
-        widget=forms.Select(attrs={"class": "form-select"})
+        choices=URGENCY_CHOICES, label="Urgency",
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     hospital = forms.ChoiceField(
-        choices=HOSPITAL_CHOICES,            # ← כאן התיקון: שימוש ברשימה המלאה
-        label="Hospital",
-        widget=forms.Select(attrs={"class": "form-select"})
+        choices=HOSPITAL_CHOICES, label="Hospital",
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     blood_type = forms.ChoiceField(
-        choices=[("", "Choose blood type")] + BLOOD_TYPES,
-        label="Requested blood type",
-        widget=forms.Select(attrs={"class": "form-select"})
+        choices=[("", "Choose blood type")] + BLOOD_TYPES, label="Requested blood type",
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     quantity = forms.IntegerField(
-        min_value=1,
-        label="Quantity",
-        widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"})
+        min_value=1, label="Quantity",
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
     )
     notes = forms.CharField(
-        label="Notes",
-        required=False,
-        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"})
+        label="Notes", required=False,
+        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
     )
 
     def clean_hospital(self):
@@ -228,6 +249,7 @@ class DispenseForm(forms.Form):
         if not val or "|" not in val:
             raise forms.ValidationError("Please choose a hospital from the list.")
         return val
+
 
 class DonationForm(forms.ModelForm):
     national_id = forms.CharField(label="National ID", validators=[digits_9_validator])
@@ -243,7 +265,7 @@ class DonationForm(forms.ModelForm):
             national_id=self.cleaned_data["national_id"],
             defaults={"full_name": self.cleaned_data["full_name"]},
         )
-        # עדכון שם במידת הצורך
+        # עדכן שם אם השתנה
         if donor.full_name != self.cleaned_data["full_name"]:
             donor.full_name = self.cleaned_data["full_name"]
             donor.save(update_fields=["full_name"])
