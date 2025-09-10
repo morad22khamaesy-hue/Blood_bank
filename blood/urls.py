@@ -13,6 +13,7 @@ urlpatterns = [
     # donor / requester
     path("intake/", views.intake, name="intake"),
     path("dispense/", views.dispense, name="dispense"),
+    path("profile/", views.profile, name="profile"),
 
     # manager portal
     path("portal/login/", views.portal_login, name="portal_login"),

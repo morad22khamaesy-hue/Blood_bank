@@ -8,6 +8,7 @@ from django.contrib.auth.models import User
 # ⬆⬆⬆ הוספה חשובה ⬆⬆⬆
 
 from .models import Donor, DonationUnit, BLOOD_TYPES, Profile
+from django.utils import timezone
 
 # -------------------------------------------------------------------
 # Comprehensive hospitals list (Israel) → value: "Name|City", label: "Name — City"
@@ -102,53 +103,35 @@ URGENCY_CHOICES = [
 ]
 
 # ---------------- Validators ----------------
-digits_9_validator = RegexValidator(
-    regex=r"^\d{9}$",
-    message="National ID must be exactly 9 digits.",
-)
-name_validator = RegexValidator(
-    regex=r"^[A-Za-z\u0590-\u05FF\s'\-]{2,}$",
-    message="Name may contain letters, spaces, apostrophes, and hyphens only.",
-)
+digits_9_validator = RegexValidator(regex=r"^\d{9}$", message="National ID must be exactly 9 digits.")
+name_validator = RegexValidator(regex=r"^[A-Za-z\u0590-\u05FF\s'\-]{2,}$",
+                                message="Name may contain letters, spaces, apostrophes, and hyphens only.")
 
-# ---------------- Auth forms ----------------
+# ==================== Auth forms ====================
 class SignupForm(UserCreationForm):
-    ROLE_CHOICES = [
-        (Profile.Role.DONOR, "Register as Donor"),
-        (Profile.Role.REQUESTER, "Register as Requester"),
-    ]
+    ROLE_CHOICES = [(Profile.Role.DONOR, "Register as Donor"),
+                    (Profile.Role.REQUESTER, "Register as Requester")]
     role = forms.ChoiceField(choices=ROLE_CHOICES, label="Role",
                              widget=forms.Select(attrs={"class": "form-select"}))
 
-    # לשימוש כשנרשם כתורם
-    full_name = forms.CharField(
-        label="Full name", required=False,
-        validators=[name_validator],
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Full name"}),
-    )
-    national_id = forms.CharField(
-        label="National ID", required=False,
-        validators=[digits_9_validator],
-        widget=forms.TextInput(attrs={
-            "class": "form-control",
-            "placeholder": "9 digits",
-            "maxlength": "9",
-            "inputmode": "numeric",
-            "pattern": r"\d{9}",
-        }),
-    )
-    donor_blood_type = forms.ChoiceField(
-        label="Blood type (for donors)", required=False,
-        choices=[("", "Choose blood type")] + BLOOD_TYPES,
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
+    # Donor-only
+    full_name = forms.CharField(label="Full name", required=False, validators=[name_validator],
+                                widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Full name"}))
+    national_id = forms.CharField(label="National ID", required=False, validators=[digits_9_validator],
+                                  widget=forms.TextInput(attrs={
+                                      "class": "form-control", "placeholder": "9 digits",
+                                      "maxlength": "9", "inputmode": "numeric", "pattern": r"\d{9}",
+                                  }))
+    donor_blood_type = forms.ChoiceField(label="Blood type (for donors)", required=False,
+                                         choices=[("", "Choose blood type")] + BLOOD_TYPES,
+                                         widget=forms.Select(attrs={"class": "form-select"}))
+    date_of_birth = forms.DateField(label="Date of birth (for donors)", required=False,
+                                    widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}))
 
     class Meta:
         model = User
-        fields = [
-            "username", "password1", "password2",
-            "role", "full_name", "national_id", "donor_blood_type",
-        ]
+        fields = ["username", "password1", "password2",
+                  "role", "full_name", "national_id", "donor_blood_type", "date_of_birth"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -156,53 +139,55 @@ class SignupForm(UserCreationForm):
         self.fields["password1"].widget.attrs.update({"class": "form-control", "placeholder": "Password"})
         self.fields["password2"].widget.attrs.update({"class": "form-control", "placeholder": "Confirm password"})
 
+    # מניעת ת"ז כפולה
+    def clean_national_id(self):
+        nid = (self.cleaned_data.get("national_id") or "").strip()
+        role = self.cleaned_data.get("role")
+        if role == Profile.Role.DONOR:
+            if not nid:
+                raise forms.ValidationError("National ID is required for donors.")
+            if Profile.objects.filter(national_id=nid).exists():
+                raise forms.ValidationError("This National ID is already registered.")
+        return nid
+
     def clean(self):
         data = super().clean()
         role = data.get("role")
-
         if role == Profile.Role.DONOR:
-            full_name = (data.get("full_name") or "").strip()
-            national_id = (data.get("national_id") or "").strip()
-            donor_bt = (data.get("donor_blood_type") or "").strip()
-
-            if not full_name:
+            if not data.get("full_name"):
                 self.add_error("full_name", "Full name is required for donors.")
-            if not national_id:
-                self.add_error("national_id", "National ID is required for donors.")
-            if not donor_bt:
+            if not data.get("donor_blood_type"):
                 self.add_error("donor_blood_type", "Blood type is required for donors.")
-
-            # 🔒 מניעת כפילות ת"ז (בפרופיל תורם ובטבלת Donor)
-            if national_id:
-                if Profile.objects.filter(role=Profile.Role.DONOR, national_id=national_id).exists():
-                    self.add_error("national_id", "This National ID is already registered to another donor.")
-                if Donor.objects.filter(national_id=national_id).exists():
-                    self.add_error("national_id", "This National ID already exists in the donors registry.")
-
+            dob = data.get("date_of_birth")
+            if not dob:
+                self.add_error("date_of_birth", "Date of birth is required for donors.")
+            else:
+                if dob > timezone.now().date():
+                    self.add_error("date_of_birth", "Date of birth cannot be in the future.")
         return data
 
     def save(self, commit=True):
         user = super().save(commit=commit)
         role = self.cleaned_data["role"]
-
         full_name = (self.cleaned_data.get("full_name") or "").strip()
         national_id = (self.cleaned_data.get("national_id") or "").strip()
         donor_bt = (self.cleaned_data.get("donor_blood_type") or "").strip()
+        dob = self.cleaned_data.get("date_of_birth")
 
         if commit:
-            prof = Profile.objects.create(
-                user=user,
-                role=role,
+            Profile.objects.create(
+                user=user, role=role,
                 full_name=full_name if role == Profile.Role.DONOR else "",
                 national_id=national_id if role == Profile.Role.DONOR else "",
                 default_blood_type=donor_bt if role == Profile.Role.DONOR else "",
+                date_of_birth=dob if role == Profile.Role.DONOR else None,
             )
-            # יצירת/עדכון רשומת Donor כדי לזרז Intake
             if role == Profile.Role.DONOR and national_id:
                 donor, _ = Donor.objects.get_or_create(
                     national_id=national_id,
-                    defaults={"full_name": full_name or user.username},
+                    defaults={"full_name": full_name or user.username, "date_of_birth": dob},
                 )
+                # סינכרון שם אם השתנה
                 if full_name and donor.full_name != full_name:
                     donor.full_name = full_name
                     donor.save(update_fields=["full_name"])
@@ -212,37 +197,68 @@ class SignupForm(UserCreationForm):
 
 
 class LoginForm(AuthenticationForm):
-    username = forms.CharField(
-        label="Username",
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Username"}),
-    )
-    password = forms.CharField(
-        label="Password",
-        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Password"}),
-    )
+    username = forms.CharField(label="Username",
+                               widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Username"}))
+    password = forms.CharField(label="Password",
+                               widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Password"}))
 
-# ---------------- Domain forms ----------------
+# --------- Profile update ----------
+class ProfileUpdateForm(forms.ModelForm):
+    national_id = forms.CharField(label="National ID", required=False, validators=[digits_9_validator],
+                                  widget=forms.TextInput(attrs={"class": "form-control", "maxlength": "9"}))
+    full_name = forms.CharField(label="Full name", required=False, validators=[name_validator],
+                                widget=forms.TextInput(attrs={"class": "form-control"}))
+    default_blood_type = forms.ChoiceField(label="Blood type", required=False,
+                                           choices=[("", "—")] + BLOOD_TYPES,
+                                           widget=forms.Select(attrs={"class": "form-select"}))
+    date_of_birth = forms.DateField(label="Birth date", required=False,
+                                    widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}))
+    photo = forms.ImageField(label="Profile photo", required=False,
+                             widget=forms.ClearableFileInput(attrs={"class": "form-control"}))
+
+    class Meta:
+        model = Profile
+        fields = ["full_name", "national_id", "default_blood_type", "date_of_birth", "photo"]
+
+    def clean_national_id(self):
+        nid = (self.cleaned_data.get("national_id") or "").strip()
+        if nid and Profile.objects.exclude(pk=self.instance.pk).filter(national_id=nid).exists():
+            raise forms.ValidationError("This National ID is already registered to another account.")
+        return nid
+
+    def save(self, commit=True):
+        profile = super().save(commit=commit)
+        # שמירת/סנכרון Donor
+        if commit and profile.national_id:
+            donor, _ = Donor.objects.get_or_create(
+                national_id=profile.national_id,
+                defaults={"full_name": profile.full_name or profile.user.username,
+                          "date_of_birth": profile.date_of_birth},
+            )
+            changed = False
+            if profile.full_name and donor.full_name != profile.full_name:
+                donor.full_name = profile.full_name
+                changed = True
+            if profile.date_of_birth and donor.date_of_birth != profile.date_of_birth:
+                donor.date_of_birth = profile.date_of_birth
+                changed = True
+            if changed:
+                donor.save()
+        return profile
+
+# ==================== Domain forms ====================
 class DispenseForm(forms.Form):
-    urgency = forms.ChoiceField(
-        choices=URGENCY_CHOICES, label="Urgency",
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
-    hospital = forms.ChoiceField(
-        choices=HOSPITAL_CHOICES, label="Hospital",
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
-    blood_type = forms.ChoiceField(
-        choices=[("", "Choose blood type")] + BLOOD_TYPES, label="Requested blood type",
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
-    quantity = forms.IntegerField(
-        min_value=1, label="Quantity",
-        widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
-    )
-    notes = forms.CharField(
-        label="Notes", required=False,
-        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
-    )
+    urgency = forms.ChoiceField(choices=URGENCY_CHOICES, label="Urgency",
+                                widget=forms.Select(attrs={"class": "form-select"}))
+    hospital = forms.ChoiceField(choices=HOSPITAL_CHOICES, label="Hospital",
+                                 widget=forms.Select(attrs={"class": "form-select"}))
+    blood_type = forms.ChoiceField(choices=[("", "Choose blood type")] + BLOOD_TYPES,
+                                   label="Requested blood type",
+                                   widget=forms.Select(attrs={"class": "form-select"}))
+    quantity = forms.IntegerField(min_value=1, label="Quantity",
+                                  widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"}))
+    notes = forms.CharField(label="Notes", required=False,
+                            widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}))
 
     def clean_hospital(self):
         val = self.cleaned_data["hospital"]
@@ -265,7 +281,6 @@ class DonationForm(forms.ModelForm):
             national_id=self.cleaned_data["national_id"],
             defaults={"full_name": self.cleaned_data["full_name"]},
         )
-        # עדכן שם אם השתנה
         if donor.full_name != self.cleaned_data["full_name"]:
             donor.full_name = self.cleaned_data["full_name"]
             donor.save(update_fields=["full_name"])

@@ -1,0 +1,155 @@
+{% extends "blood/base.html" %}
+{% block title %}Profile - Blood Bank{% endblock %}
+{% block content %}
+<section class="py-4">
+  <div class="container">
+    <div class="row g-4">
+      <!-- Profile card -->
+      <div class="col-lg-6">
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            <h2 class="h5 mb-4">Your profile</h2>
+
+            <div class="d-flex align-items-center mb-3">
+              {% if profile.photo %}
+                <img src="{{ profile.photo.url }}" class="rounded-circle me-3" alt="avatar" width="56" height="56">
+              {% else %}
+                <div class="rounded-circle bg-light border d-flex align-items-center justify-content-center me-3"
+                     style="width:56px;height:56px;">
+                  <span class="fw-semibold text-muted">{{ profile.full_name|default:user.username|first|upper }}{{ user.username|slice:"1:2"|upper }}</span>
+                </div>
+              {% endif %}
+              <div>
+                <div class="fw-semibold">{{ profile.full_name|default:user.username }}</div>
+                <div class="text-muted small">Username: {{ user.username }}</div>
+              </div>
+            </div>
+
+            <dl class="row small mb-4">
+              <dt class="col-4">National ID</dt>
+              <dd class="col-8">{{ profile.national_id|default:"—" }}</dd>
+
+              <dt class="col-4">Blood type</dt>
+              <dd class="col-8">{{ profile.default_blood_type|default:"—" }}</dd>
+
+              <dt class="col-4">Birth date</dt>
+              <dd class="col-8">{{ profile.date_of_birth|date:"Y-m-d"|default:"—" }}</dd>
+            </dl>
+
+            <hr>
+
+            <h6 class="mb-3">Update details</h6>
+            <form method="post" enctype="multipart/form-data" novalidate>
+              {% csrf_token %}
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">Full name</label>
+                  {{ pform.full_name }}
+                  {% if pform.full_name.errors %}<div class="invalid-feedback d-block">{% for e in pform.full_name.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">National ID</label>
+                  {{ pform.national_id }}
+                  {% if pform.national_id.errors %}<div class="invalid-feedback d-block">{% for e in pform.national_id.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Blood type</label>
+                  {{ pform.default_blood_type }}
+                  {% if pform.default_blood_type.errors %}<div class="invalid-feedback d-block">{% for e in pform.default_blood_type.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Birth date</label>
+                  {{ pform.date_of_birth }}
+                  {% if pform.date_of_birth.errors %}<div class="invalid-feedback d-block">{% for e in pform.date_of_birth.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Profile photo</label>
+                  {{ pform.photo }}
+                  {% if pform.photo.errors %}<div class="invalid-feedback d-block">{% for e in pform.photo.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                </div>
+              </div>
+              <button class="btn btn-bb mt-3" type="submit" name="save_profile">Save profile</button>
+            </form>
+
+            <hr class="my-4">
+
+            <h6 class="mb-2">Change password</h6>
+            <p class="text-muted small mb-2">For security reasons, your current password cannot be displayed.</p>
+            <button class="btn btn-outline-secondary btn-sm mb-3" type="button" id="togglePw">Change password</button>
+
+            <form method="post" id="pwForm" class="d-none">
+              {% csrf_token %}
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">Current password</label>
+                  {{ pwform.old_password }}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">New password</label>
+                  {{ pwform.new_password1 }}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Confirm new password</label>
+                  {{ pwform.new_password2 }}
+                </div>
+              </div>
+              <button class="btn btn-bb mt-3" type="submit" name="change_password">Update password</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Donations list -->
+      <div class="col-lg-6">
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            <h2 class="h5 mb-3">Your donations</h2>
+            {% if donations %}
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Blood type</th>
+                      <th>Date</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for d in donations %}
+                      <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ d.blood_type }}</td>
+                        <td>{{ d.donation_date|date:"Y-m-d H:i" }}</td>
+                        <td>
+                          {% if d.status == 'AVAILABLE' %}
+                            <span class="badge bg-success-subtle text-success-emphasis">Available</span>
+                          {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis">Dispensed</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="alert alert-info">No donations yet.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function(){
+  const btn = document.getElementById('togglePw');
+  const form = document.getElementById('pwForm');
+  if(btn && form){
+    btn.addEventListener('click', function(){ form.classList.toggle('d-none'); });
+  }
+})();
+</script>
+{% endblock %}

@@ -141,3 +141,27 @@ TEMPLATES[0]["OPTIONS"]["context_processors"] += [
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "home"
+
+
+
+# בתחתית הקובץ
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "django-error.log",
+            "mode": "a",
+        },
+    },
+    "root": {
+        "handlers": ["console", "file"],
+        "level": "INFO",
+    },
+}

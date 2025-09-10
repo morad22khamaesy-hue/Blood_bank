@@ -16,6 +16,9 @@ from django.http import HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.forms import PasswordChangeForm
+from .forms import ProfileUpdateForm
 
 from .forms import DonationForm, DispenseForm, SignupForm, LoginForm
 from .models import (
@@ -23,14 +26,13 @@ from .models import (
     DispenseRequest, Profile, AuditEvent, Donor
 )
 from .compat import plan_dispense
-import time
 
-# ========= קבועים לתצוגת האדמין ביומן הפעילות =========
+# ========= Admin display for portal events =========
 ADMIN_DISPLAY_NAME = "MORAD"
 ADMIN_ROLE_LABEL = "ADMIN"
 
 
-# ------------------------ עזר ------------------------
+# ------------------------ helpers ------------------------
 def _urgent_pending_count():
     return DispenseRequest.objects.filter(
         status=DispenseRequest.Status.PENDING,
@@ -52,10 +54,10 @@ def _ensure_session_key(request):
 
 def log_event(request, action, role=None, user_display=None, **details):
     """
-    יצירת AuditEvent.
-    role – תפקיד שיוצג בשורה (ברירת מחדל: תפקיד המשתמש).
-    user_display – תצוגת שם משתמש מלאכותית (למשל MORAD בפורטל).
-    details – dict נוסף לשמירה.
+    Create AuditEvent.
+    role – override role shown on the row (default: current user's role).
+    user_display – override display name (e.g., MORAD on portal logins).
+    details – extra dict persisted.
     """
     role_val = role if role is not None else _get_role(request)
     skey = _ensure_session_key(request)
@@ -71,7 +73,7 @@ def log_event(request, action, role=None, user_display=None, **details):
     )
 
 
-# ------------------------ הרשאות תפקיד ------------------------
+# ------------------------ role guards ------------------------
 def role_required(expected_role):
     def decorator(view_func):
         @wraps(view_func)
@@ -86,22 +88,22 @@ def role_required(expected_role):
     return decorator
 
 
-# ------------------------ פורטל מנהל (סיסמה חד־פעמית) ------------------------
+# ------------------------ manager portal (password per page) ------------------------
 def portal_protected(view_func):
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
-        # מאפשר כניסה חד־פעמית רק לעמוד הנוכחי
+        # one-time access for this request only
         if request.session.pop("portal_once_ok", False):
             return view_func(request, *args, **kwargs)
-        # שמירת היעד והפניה למסך סיסמה
         request.session["portal_next"] = request.get_full_path()
         return redirect("portal_login")
     return _wrapped
 
+
 def portal_login(request):
     """
-    הזנת סיסמת מנהל. לאחר הצלחה מתקבלת גישה חד־פעמית לעמוד שביקשנו.
-    מעבר לעמוד מנהל אחר ידרוש סיסמה שוב.
+    Ask for portal password. On success, permit a single page load,
+    and log PORTAL_LOGIN with ROLE=ADMIN and USER=MORAD to the audit table.
     """
     error = None
     if request.method == "POST":
@@ -110,28 +112,35 @@ def portal_login(request):
         if pwd == portal_pwd:
             request.session["portal_once_ok"] = True
             messages.success(request, "Access granted.")
+            log_event(
+                request,
+                action="PORTAL_LOGIN",
+                role=ADMIN_ROLE_LABEL,
+                user_display=ADMIN_DISPLAY_NAME,
+            )
             next_url = request.session.pop("portal_next", None) or reverse("records")
             return redirect(next_url)
         error = "Incorrect password."
         messages.error(request, error)
 
-    # ספירת בקשות דחופות אם הפונקציה קיימת בקובץ
-    try:
-        urgent_count = _urgent_pending_count()
-    except NameError:
-        urgent_count = 0
-
-    ctx = {"error": error, "urgent_pending_count": urgent_count}
+    ctx = {"error": error, "urgent_pending_count": _urgent_pending_count()}
     return render(request, "blood/portal_login.html", ctx)
+
 
 def portal_logout(request):
     request.session.pop("portal_once_ok", None)
     request.session.pop("portal_next", None)
     messages.info(request, "You have been logged out.")
+    log_event(
+        request,
+        action="PORTAL_LOGOUT",
+        role=ADMIN_ROLE_LABEL,
+        user_display=ADMIN_DISPLAY_NAME,
+    )
     return redirect("portal_login")
 
 
-# ------------------------ הזדהות משתמשים ------------------------
+# ------------------------ auth ------------------------
 def signup(request):
     if request.method == "POST":
         form = SignupForm(request.POST)
@@ -175,7 +184,7 @@ def logout(request):
     return redirect("home")
 
 
-# ------------------------ עמוד ציבורי ------------------------
+# ------------------------ public ------------------------
 def home(request):
     return render(
         request,
@@ -184,9 +193,12 @@ def home(request):
     )
 
 
-# ------------------------ תורם בלבד ------------------------
+# ------------------------ donor only ------------------------
 @role_required(Profile.Role.DONOR)
 def intake(request):
+    """
+    Intake page: fields are locked and prefilled from Profile.
+    """
     prof = getattr(request.user, "profile", None)
     initial_full_name = (
         prof.full_name if prof and prof.full_name else request.user.get_full_name() or request.user.username
@@ -198,7 +210,7 @@ def intake(request):
     }
 
     if request.method == "POST":
-        # נעול לשינוי – משתמש לא יכול לשנות בשיגור
+        # lock values (ignore client-side edits)
         post_data = {
             "national_id": initial["national_id"],
             "full_name": initial["full_name"],
@@ -225,16 +237,19 @@ def intake(request):
         "blood/intake.html",
         {
             "form": form,
-            "lock_fields": True,  # התבנית תשים readonly / disabled לשדות
+            "lock_fields": True,
             "urgent_pending_count": _urgent_pending_count(),
             "user_role": _get_role(request),
         },
     )
 
 
-# ------------------------ מבקש מנות בלבד ------------------------
+# ------------------------ requester only ------------------------
 @role_required(Profile.Role.REQUESTER)
 def dispense(request):
+    """
+    Create dispense request (only if stock is sufficient), plus show all requests.
+    """
     requests_all = DispenseRequest.objects.all().order_by("-created_at")
 
     if request.method == "POST":
@@ -261,7 +276,7 @@ def dispense(request):
             inventory_counts = {row["blood_type"]: row["cnt"] for row in counts_qs}
             plan, shortfall = plan_dispense(blood_type, qty, inventory_counts)
 
-            # אין מלאי מספיק -> ההזמנה לא תישלח
+            # insufficient stock => do not submit request
             if not plan or (shortfall and shortfall > 0):
                 if not plan or shortfall == qty:
                     messages.error(
@@ -291,7 +306,7 @@ def dispense(request):
                     )
                 return redirect("dispense")
 
-            # יש מלאי – בקשה ממתינה לאישור מנהל
+            # ok → pending manager approval
             DispenseRequest.objects.create(
                 hospital_name=hospital_name,
                 hospital_city=hospital_city,
@@ -328,18 +343,18 @@ def dispense(request):
     )
 
 
-# ------------------------ מנהל (מוגן פורטל) ------------------------
+# ------------------------ manager (portal-protected) ------------------------
 @portal_protected
 def records(request):
     """
-    Records (במקום Donations):
-    A: תרומות שנקלטו
-    B: מנות שנופקו
+    Records page:
+    A: intake donations
+    B: dispensed units
     """
     blood_type = request.GET.get("blood_type", "").strip()
     sort_key = request.GET.get("sort", "recent").strip()
 
-    # A – תרומות
+    # A – donations
     in_qs = DonationUnit.objects.select_related("donor")
     if blood_type:
         in_qs = in_qs.filter(blood_type=blood_type)
@@ -355,7 +370,7 @@ def records(request):
     in_page = request.GET.get("page")
     donations = in_pager.get_page(in_page)
 
-    # B – מנות שנופקו
+    # B – dispensed
     out_qs = DonationUnit.objects.filter(status=DonationUnit.Status.DISPENSED).select_related("donor")
     if blood_type:
         out_qs = out_qs.filter(blood_type=blood_type)
@@ -393,7 +408,7 @@ def records(request):
     return render(request, "blood/records.html", context)
 
 
-# ------------------------ ייצוא דו"חות ------------------------
+# ------------------------ exports ------------------------
 def _export_rows(filename_prefix, headers, rows, fmt):
     fmt = (fmt or "csv").lower()
     if fmt == "xlsx":
@@ -519,8 +534,8 @@ def dispensed_export(request):
 @portal_protected
 def inventory_dashboard(request):
     """
-    סיכום מלאי + בקשות ממתינות + יומן פעילות.
-    מחזיר גם low_stock_threshold לגרף (קו אדום).
+    Inventory + pending requests + audit log.
+    Also passes low_stock_threshold for the red line on the chart.
     """
     now = timezone.now()
     near_days = getattr(settings, "NEAR_EXPIRY_DAYS", 7)
@@ -532,12 +547,12 @@ def inventory_dashboard(request):
         .filter(Q(expiry_at__isnull=True) | Q(expiry_at__gt=now))
     )
 
-    # זמינות לפי סוג דם
+    # available by type
     available_counts = {bt: 0 for bt, _ in BLOOD_TYPES}
     for row in base_qs.values("blood_type").annotate(cnt=Count("id")):
         available_counts[row["blood_type"]] = row["cnt"]
 
-    # קרוב לפקיעה
+    # near expiry
     near_counts = {bt: 0 for bt, _ in BLOOD_TYPES}
     for row in (
         base_qs.filter(expiry_at__isnull=False, expiry_at__lte=near_cutoff)
@@ -546,7 +561,7 @@ def inventory_dashboard(request):
     ):
         near_counts[row["blood_type"]] = row["cnt"]
 
-    # סה"כ תרומות היסטוריות
+    # total donated historically
     donated_totals = {bt: 0 for bt, _ in BLOOD_TYPES}
     for row in DonationUnit.objects.values("blood_type").annotate(cnt=Count("id")):
         donated_totals[row["blood_type"]] = row["cnt"]
@@ -559,12 +574,12 @@ def inventory_dashboard(request):
         for bt in labels
     ]
 
-    # בקשות ממתינות
+    # pending requests
     pending = DispenseRequest.objects.filter(status=DispenseRequest.Status.PENDING).order_by(
         "-urgency", "created_at"
     )
 
-    # יומן פעילות – דף זה
+    # audit events table
     events_qs = AuditEvent.objects.select_related("user").order_by("-created_at")
     events_pager = Paginator(events_qs, 25)
     epage = request.GET.get("epage")
@@ -586,7 +601,7 @@ def inventory_dashboard(request):
     return render(request, "blood/inventory_dashboard.html", context)
 
 
-# ------------------------ פעולות מנהל ------------------------
+# ------------------------ manager actions ------------------------
 def donation_delete(request, pk: int):
     if request.method != "POST":
         return redirect("records")
@@ -687,3 +702,53 @@ def request_reject(request, pk: int):
     req.delete()
     messages.success(request, "Request rejected and removed.")
     return redirect("inventory")
+
+
+# ------------------------ NEW: profile page (fix for missing view) ------------------------
+@login_required(login_url="login")
+def profile(request):
+    """
+    עמוד פרופיל:
+    - מציג פרטי Profile (כולל ת"ז, סוג דם ותאריך לידה)
+    - מאפשר עדכון פרטים + העלאת תמונת פרופיל
+    - שינוי סיסמה בלחיצה (טופס מוסתר/גלוי ב־template)
+    - מציג תרומות של התורם (אם role=DONOR ויש ת"ז)
+    """
+    if not hasattr(request.user, "profile"):
+        messages.error(request, "Profile is not available.")
+        return redirect("home")
+
+    prof = request.user.profile
+
+    donor = None
+    donations = DonationUnit.objects.none()
+    if prof.role == Profile.Role.DONOR and prof.national_id:
+        donor = Donor.objects.filter(national_id=prof.national_id).first()
+        if donor:
+            donations = DonationUnit.objects.filter(donor=donor).order_by("-donation_date")
+
+    if request.method == "POST":
+        if "save_profile" in request.POST:
+            pform = ProfileUpdateForm(request.POST, request.FILES, instance=prof)
+            pwform = PasswordChangeForm(user=request.user)  # להשאיר ריק בסשן הזה
+            if pform.is_valid():
+                pform.save()
+                messages.success(request, "Profile updated.")
+                return redirect("profile")
+        elif "change_password" in request.POST:
+            pform = ProfileUpdateForm(instance=prof)  # שלא נאבד את הטופס בצד
+            pwform = PasswordChangeForm(user=request.user, data=request.POST)
+            if pwform.is_valid():
+                user = pwform.save()
+                update_session_auth_hash(request, user)  # שלא יתנתק
+                messages.success(request, "Password changed successfully.")
+                return redirect("profile")
+    else:
+        pform = ProfileUpdateForm(instance=prof)
+        pwform = PasswordChangeForm(user=request.user)
+
+    return render(request, "blood/profile.html", {
+        "profile": prof, "pform": pform, "pwform": pwform,
+        "donations": donations, "donor": donor,
+        "user_role": prof.role,
+    })

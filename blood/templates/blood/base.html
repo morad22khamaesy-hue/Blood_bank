@@ -4,64 +4,58 @@
   <meta charset="utf-8">
   <title>{% block title %}Blood Bank{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap 5 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <style>
     :root{
-      --bb-bg:#f8fafc; --bb-card:#fff; --bb-border:#e5e7eb; --bb-text:#111827;
-      --bb-muted:#6b7280; --bb-brand:#c81d25; --bb-brand-dark:#a5161c;
-      --bb-danger:#b91c1c;
+      --bb-primary:#c81d25; --bb-secondary:#1f2937; --bb-bg:#f7f9fb;
+      --bb-card:#ffffff; --bb-border:#e5e7eb;
     }
-    body{ background:var(--bb-bg); color:var(--bb-text); }
-    .navbar{ background:var(--bb-card)!important; border-bottom:1px solid var(--bb-border); }
-    .card{ background:var(--bb-card); border:1px solid var(--bb-border); }
-    .btn-bb{ background:var(--bb-brand); color:#fff; border:0; }
-    .btn-bb:hover{ background:var(--bb-brand-dark); color:#fff; }
-    .bb-dot{ position:absolute; top:0; left:100%; transform:translate(-40%,-20%);
-             width:.6rem;height:.6rem;border-radius:50%; background:var(--bb-danger); border:1px solid #fff; }
+    body{background:var(--bb-bg);}
+    .navbar{background:#fff;border-bottom:1px solid var(--bb-border);}
+    .btn-bb{background:var(--bb-primary);border-color:var(--bb-primary);color:#fff;}
+    .btn-bb:hover{filter:brightness(.95);color:#fff;}
+    .badge-soft{background:rgba(200,29,37,.12);color:#a0141a;border:1px solid rgba(200,29,37,.25);}
+    .card{border:1px solid var(--bb-border);border-radius:16px;}
   </style>
 </head>
 <body>
   <nav class="navbar navbar-expand-lg">
     <div class="container">
       <a class="navbar-brand fw-semibold" href="/">Blood Bank</a>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"
+              aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div id="nav" class="collapse navbar-collapse">
         <ul class="navbar-nav ms-auto">
           <li class="nav-item"><a class="nav-link" href="{% url 'home' %}">Home</a></li>
 
-          {# כשמחוברים: מציגים קישורים לפי תפקיד בלבד #}
-          {% if request.user.is_authenticated and user_role == 'DONOR' %}
-            <li class="nav-item"><a class="nav-link" href="{% url 'intake' %}">Intake</a></li>
+          {% if not request.user.is_authenticated %}
+            <!-- לפני התחברות – להציג קישורי מנהל -->
+            <li class="nav-item"><a class="nav-link" href="{% url 'records' %}">Records</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'inventory' %}">Inventory</a></li>
           {% endif %}
-          {% if request.user.is_authenticated and user_role == 'REQUESTER' %}
+
+          {% if request.user.is_authenticated and request.user.profile.role == "DONOR" %}
+            <li class="nav-item"><a class="nav-link" href="{% url 'intake' %}">Intake</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'profile' %}">Profile</a></li>
+          {% elif request.user.is_authenticated and request.user.profile.role == "REQUESTER" %}
             <li class="nav-item"><a class="nav-link" href="{% url 'dispense' %}">Dispense</a></li>
           {% endif %}
 
-          {# כשלא מחוברים: מציגים למנהל קישורי Records/Inventory כדי שיוכל להיכנס דרך ה-portal #}
-          {% if not request.user.is_authenticated %}
+          {% if request.session.portal_once_ok %}
             <li class="nav-item"><a class="nav-link" href="{% url 'records' %}">Records</a></li>
-            <li class="nav-item position-relative">
-              <a class="nav-link" href="{% url 'inventory' %}">
-                Inventory
-                {% if urgent_pending_count %}
-                  <span class="bb-dot" title="{{ urgent_pending_count }} urgent request(s) pending"></span>
-                {% endif %}
-              </a>
-            </li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'inventory' %}">Inventory</a></li>
+            <li class="nav-item"><a class="nav-link text-danger" href="{% url 'portal_logout' %}">Portal logout</a></li>
           {% endif %}
-          
+
           {% if request.user.is_authenticated %}
-            <li class="nav-item ms-3">
-              <span class="nav-link disabled">Hello, {{ request.user.username }}</span>
-            </li>
             <li class="nav-item"><a class="nav-link" href="{% url 'logout' %}">Logout</a></li>
           {% else %}
             <li class="nav-item"><a class="nav-link" href="{% url 'signup' %}">Sign up</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'login' %}">Login</a></li>
-            {# המנהל יכול גם לגשת ישירות ל-/portal/login/ #}
           {% endif %}
         </ul>
       </div>

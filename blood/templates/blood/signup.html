@@ -1,148 +1,133 @@
 {% extends "blood/base.html" %}
 {% block title %}Sign up - Blood Bank{% endblock %}
 {% block content %}
-  <section class="py-5">
-    <div class="container">
-      <div class="row justify-content-center">
-        <div class="col-md-8 col-lg-6">
-          <div class="card border-0 shadow-sm overflow-hidden">
-            <div class="row g-0">
-
-              <div class="col-12">
-                <div class="p-4 p-md-5" style="background:linear-gradient(135deg, rgba(200,29,37,.12), rgba(200,29,37,.04)); border-bottom:1px solid #e5e7eb">
-                  <h1 class="h3 mb-1">Create your account</h1>
-                  <p class="text-muted mb-0">Choose your role. Donors provide ID & blood type once.</p>
-                </div>
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-md-8 col-lg-6">
+        <div class="card border-0 shadow-sm overflow-hidden">
+          <div class="row g-0">
+            <div class="col-12">
+              <div class="p-4 p-md-5" style="background:linear-gradient(135deg, rgba(200,29,37,.12), rgba(200,29,37,.04)); border-bottom:1px solid #e5e7eb">
+                <h1 class="h3 mb-1">Create your account</h1>
+                <p class="text-muted mb-0">Choose your role. Donors provide ID, blood type and birth date once.</p>
               </div>
+            </div>
 
-              <div class="col-12">
-                <div class="p-4 p-md-5">
-                  {% if form.non_field_errors %}
-                    <div class="alert alert-danger">
-                      {% for e in form.non_field_errors %}{{ e }}<br>{% endfor %}
-                    </div>
-                  {% endif %}
+            <div class="col-12">
+              <div class="p-4 p-md-5">
+                {% if form.non_field_errors %}
+                  <div class="alert alert-danger">
+                    {% for e in form.non_field_errors %}{{ e }}<br>{% endfor %}
+                  </div>
+                {% endif %}
 
-                  <form method="post" novalidate>
-                    {% csrf_token %}
+                <form method="post" novalidate>
+                  {% csrf_token %}
 
-                    <div class="mb-3">
-                      <label class="form-label" for="id_username">Username</label>
-                      {{ form.username }}
-                      {% if form.username.errors %}
-                        <div class="invalid-feedback d-block">
-                          {% for e in form.username.errors %}{{ e }}<br>{% endfor %}
-                        </div>
-                      {% endif %}
-                    </div>
-
-                    <div class="mb-3">
-                      <label class="form-label" for="id_password1">Password</label>
-                      {{ form.password1 }}
-                      {% if form.password1.errors %}
-                        <div class="invalid-feedback d-block">
-                          {% for e in form.password1.errors %}{{ e }}<br>{% endfor %}
-                        </div>
-                      {% endif %}
-                    </div>
-
-                    <div class="mb-3">
-                      <label class="form-label" for="id_password2">Confirm password</label>
-                      {{ form.password2 }}
-                      {% if form.password2.errors %}
-                        <div class="invalid-feedback d-block">
-                          {% for e in form.password2.errors %}{{ e }}<br>{% endfor %}
-                        </div>
-                      {% endif %}
-                    </div>
-
-                    <div class="mb-3">
-                      <label class="form-label" for="id_role">Register as</label>
-                      {{ form.role }}
-                      {% if form.role.errors %}
-                        <div class="invalid-feedback d-block">
-                          {% for e in form.role.errors %}{{ e }}<br>{% endfor %}
-                        </div>
-                      {% endif %}
-                    </div>
-
-                    {# --- Donor details: show only if role == DONOR --- #}
-                    {% with sel=form.role.value %}
-                    <div id="donor-card" class="border rounded-3 p-3 p-md-4 mb-3 {% if sel != 'DONOR' %}d-none{% endif %}">
-                      <h6 class="mb-2">Donor details</h6>
-                      <div class="row g-3">
-                        <div class="col-md-6">
-                          <label class="form-label" for="id_full_name">Full name</label>
-                          {{ form.full_name }}
-                          {% if form.full_name.errors %}
-                            <div class="invalid-feedback d-block">
-                              {% for e in form.full_name.errors %}{{ e }}<br>{% endfor %}
-                            </div>
-                          {% endif %}
-                        </div>
-                        <div class="col-md-6">
-                          <label class="form-label" for="id_national_id">National ID (9 digits)</label>
-                          {{ form.national_id }}
-                          {% if form.national_id.errors %}
-                            <div class="invalid-feedback d-block">
-                              {% for e in form.national_id.errors %}{{ e }}<br>{% endfor %}
-                            </div>
-                          {% endif %}
-                        </div>
-                        <div class="col-md-6">
-                          <label class="form-label" for="id_donor_blood_type">Blood type</label>
-                          {{ form.donor_blood_type }}
-                          {% if form.donor_blood_type.errors %}
-                            <div class="invalid-feedback d-block">
-                              {% for e in form.donor_blood_type.errors %}{{ e }}<br>{% endfor %}
-                            </div>
-                          {% endif %}
-                        </div>
-                        <div class="col-md-6">
-                          <div class="form-text">Donor fields are required if you register as a Donor.</div>
-                        </div>
+                  <div class="mb-3">
+                    <label class="form-label" for="id_username">Username</label>
+                    {{ form.username }}
+                    {% if form.username.errors %}
+                      <div class="invalid-feedback d-block">
+                        {% for e in form.username.errors %}{{ e }}<br>{% endfor %}
                       </div>
+                    {% endif %}
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label" for="id_password1">Password</label>
+                    {{ form.password1 }}
+                    {% if form.password1.errors %}
+                      <div class="invalid-feedback d-block">
+                        {% for e in form.password1.errors %}{{ e }}<br>{% endfor %}
+                      </div>
+                    {% endif %}
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label" for="id_password2">Confirm password</label>
+                    {{ form.password2 }}
+                    {% if form.password2.errors %}
+                      <div class="invalid-feedback d-block">
+                        {% for e in form.password2.errors %}{{ e }}<br>{% endfor %}
+                      </div>
+                    {% endif %}
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label" for="id_role">Register as</label>
+                    {{ form.role }}
+                    {% if form.role.errors %}
+                      <div class="invalid-feedback d-block">
+                        {% for e in form.role.errors %}{{ e }}<br>{% endfor %}
+                      </div>
+                    {% endif %}
+                  </div>
+
+                  {% with sel=form.role.value %}
+                  <div id="donor-card" class="border rounded-3 p-3 p-md-4 mb-3 {% if sel != 'DONOR' %}d-none{% endif %}">
+                    <h6 class="mb-2">Donor details</h6>
+                    <div class="row g-3">
+                      <div class="col-md-6">
+                        <label class="form-label" for="id_full_name">Full name</label>
+                        {{ form.full_name }}
+                        {% if form.full_name.errors %}<div class="invalid-feedback d-block">{% for e in form.full_name.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="id_national_id">National ID (9 digits)</label>
+                        {{ form.national_id }}
+                        {% if form.national_id.errors %}<div class="invalid-feedback d-block">{% for e in form.national_id.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="id_donor_blood_type">Blood type</label>
+                        {{ form.donor_blood_type }}
+                        {% if form.donor_blood_type.errors %}<div class="invalid-feedback d-block">{% for e in form.donor_blood_type.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="id_date_of_birth">Birth date</label>
+                        {{ form.date_of_birth }}
+                        {% if form.date_of_birth.errors %}<div class="invalid-feedback d-block">{% for e in form.date_of_birth.errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+                      </div>
+                      <div class="col-12"><div class="form-text">Donor fields are required if you register as a Donor.</div></div>
                     </div>
-                    {% endwith %}
+                  </div>
+                  {% endwith %}
 
-                    <button class="btn btn-bb w-100" type="submit">Sign up</button>
-                  </form>
+                  <button class="btn btn-bb w-100" type="submit">Sign up</button>
+                </form>
 
-                  <p class="text-center small mt-3 mb-0">
-                    Already have an account? <a href="{% url 'login' %}">Login</a>
-                  </p>
-                </div>
+                <p class="text-center small mt-3 mb-0">
+                  Already have an account? <a href="{% url 'login' %}">Login</a>
+                </p>
               </div>
+            </div>
 
-            </div> <!-- row -->
-          </div> <!-- card -->
+          </div>
         </div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <script>
-    (function(){
-      // Toggle donor card by role; also toggle 'required' on donor fields.
-      function updateDonorCard(){
-        var role = document.getElementById('id_role');
-        var card = document.getElementById('donor-card');
-        var isDonor = role && role.value === 'DONOR';
-        if(card){
-          card.classList.toggle('d-none', !isDonor);
-        }
-        var fullName   = document.getElementById('id_full_name');
-        var nationalId = document.getElementById('id_national_id');
-        var donorBT    = document.getElementById('id_donor_blood_type');
-        [fullName, nationalId, donorBT].forEach(function(el){
-          if(!el) return;
-          if(isDonor){ el.setAttribute('required','required'); }
-          else{ el.removeAttribute('required'); }
-        });
-      }
-      document.addEventListener('DOMContentLoaded', updateDonorCard);
-      var roleSel = document.getElementById('id_role');
-      if(roleSel){ roleSel.addEventListener('change', updateDonorCard); }
-    })();
-  </script>
+<script>
+(function(){
+  function updateDonorCard(){
+    var role = document.getElementById('id_role');
+    var card = document.getElementById('donor-card');
+    var isDonor = role && role.value === 'DONOR';
+    if(card){ card.classList.toggle('d-none', !isDonor); }
+    var fields = ['id_full_name','id_national_id','id_donor_blood_type','id_date_of_birth'];
+    fields.forEach(function(id){
+      var el = document.getElementById(id);
+      if(!el) return;
+      if(isDonor){ el.setAttribute('required','required'); }
+      else{ el.removeAttribute('required'); }
+    });
+  }
+  document.addEventListener('DOMContentLoaded', updateDonorCard);
+  var roleSel = document.getElementById('id_role');
+  if(roleSel){ roleSel.addEventListener('change', updateDonorCard); }
+})();
+</script>
 {% endblock %}
